@@ -26,7 +26,6 @@ public class ProcessingHandler {
     }
 
     public Span startSpan(String name, Context context) {
-
         if (context != null) {
             return tracer.spanBuilder(name)
                     .setParent(context)
@@ -35,12 +34,5 @@ public class ProcessingHandler {
 
         return tracer.spanBuilder(name)
                 .startSpan();
-    }
-
-    public void addLogboekContextToSpan(Span span, LogboekContext logboekContext) {
-        span.setAttribute("dpl.core.processing_activity_id", logboekContext.getProcessingActivityId());
-        span.setAttribute("dpl.core.data_subject_id", logboekContext.getDataSubjectId());
-        span.setAttribute("dpl.core.data_subject_id_type", logboekContext.getDataSubjectType());
-        span.setStatus(logboekContext.getStatus());
     }
 }

@@ -43,4 +43,10 @@ public class LogboekContext {
         this.status = status;
     }
 
+    public void addLogboekContextToSpan(Span span) {
+        span.setAttribute("dpl.core.processing_activity_id", this.getProcessingActivityId());
+        span.setAttribute("dpl.core.data_subject_id", this.getDataSubjectId());
+        span.setAttribute("dpl.core.data_subject_id_type", this.getDataSubjectType());
+        span.setStatus(this.getStatus());
+    }
 }
