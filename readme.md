@@ -52,6 +52,9 @@ Daarnaast kan er in de betreffende functie extra informatie aan de Span worden t
     @Inject
     ProcessingHandler handler;
 
+    @Inject
+    LogboekContext logboekContext;
+
     @GET
     @Path("/{identificatieType}/{identificatieNummer}")
     @Logboek(name = "test", processingActivityId = "1")
@@ -65,6 +68,11 @@ Daarnaast kan er in de betreffende functie extra informatie aan de Span worden t
         innerContext.setProcessingActivityId("4321");
         innerContext.addLogboekContextToSpan(innerSpan);
         innerSpan.end();
+
+        logboekContext.setDataSubjectId("000000000");
+        logboekContext.setDataSubjectType("KVK");
+        logboekContext.setStatus(StatusCode.OK);
+
 
         return Response.ok("Hello world").build();
     }
