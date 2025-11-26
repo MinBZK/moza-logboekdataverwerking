@@ -48,14 +48,26 @@ Hierbij is `name` de beschrijving van je eigen trace log en `processingActivityI
 Daarnaast kan er in de betreffende functie extra informatie aan de Span worden toegevoegd:
 
 ```java
-    var innerSpan = handler.startSpan("span-2", null);
-    Thread.sleep(1000);
-    LogboekContext innerContext = new LogboekContext();
-    innerContext.setStatus(StatusCode.ERROR);
-    innerContext.setDataSubjectId("123");
-    innerContext.setDataSubjectType("BSN");
-    innerContext.setProcessingActivityId("4321");
-    innerSpan.end();
+
+    @Inject
+    ProcessingHandler handler;
+
+    @GET
+    @Path("/{identificatieType}/{identificatieNummer}")
+    @Logboek(name = "test", processingActivityId = "1")
+    public Response test() throws InterruptedException {
+        var innerSpan = handler.startSpan("span-2", null);
+        Thread.sleep(1000);
+        LogboekContext innerContext = new LogboekContext();
+        innerContext.setStatus(StatusCode.ERROR);
+        innerContext.setDataSubjectId("123");
+        innerContext.setDataSubjectType("BSN");
+        innerContext.setProcessingActivityId("4321");
+        innerContext.addLogboekContextToSpan(innerSpan);
+        innerSpan.end();
+
+        return Response.ok("Hello world").build();
+    }
 ```
 
 ## TODO's
