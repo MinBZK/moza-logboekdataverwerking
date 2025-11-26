@@ -1,5 +1,6 @@
 package nl.rijksoverheid.moz.logboekdataverwerking;
 
+import io.opentelemetry.api.trace.Span;
 import io.opentelemetry.api.trace.StatusCode;
 import jakarta.enterprise.context.RequestScoped;
 

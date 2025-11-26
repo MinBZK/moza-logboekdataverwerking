@@ -12,6 +12,7 @@ import jakarta.ws.rs.core.HttpHeaders;
 
 import io.opentelemetry.sdk.trace.ReadableSpan;
 
+@Logboek
 @Interceptor
 public class LogboekInterceptor {
 
@@ -41,7 +42,7 @@ public class LogboekInterceptor {
         // Deze annotation moet op de service method
         Logboek annotation = invocationContext.getMethod().getAnnotation(Logboek.class);
         if (annotation == null) {
-            throw IllegalArgumentException("Logboek annotation mist op service method");
+            throw new IllegalArgumentException("Logboek annotation mist op service method");
         }
 
         // Start een span binnen deze trace. Dit zorgt er onder andere voor dat de `start_time`
@@ -60,7 +61,7 @@ public class LogboekInterceptor {
             span.setStatus(StatusCode.ERROR);
             // Zet alle attributen als onderdeel van de foutafhandeling.
             span.setAttribute("exception.message", e.getMessage());
-            span.setAttribute("exception.type", e.getClass());
+            span.setAttribute("exception.type", String.valueOf(e.getClass()));
             // Rethrow de exceptie zodat die correct wordt terug gegeven door de service.
             throw e;
         } finally {
@@ -100,5 +101,3 @@ public class LogboekInterceptor {
         }
     }
 }
-
-
