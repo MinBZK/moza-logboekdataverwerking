@@ -19,6 +19,7 @@ Dit Open Source project is opgezet om de LDV standaard eenvoudig aan nieuwe of b
 
 Om deze package te gebruiken moet je in je (maven) project de volgende variablen in je `application.properties` file toevoegen:
 ```
+logboekdataverwerking.enabled=true
 logboekdataverwerking.service-name=service-name
 logboekdataverwerking.clickhouse.endpoint=http://localhost:8123
 logboekdataverwerking.clickhouse.username=user
@@ -30,6 +31,7 @@ logboekdataverwerking.clickhouse.table=table_name
 of `application.yml`:
 ```
 logboekdataverwerking:
+    enabled: true
     service-name: service-name
     clickhouse:
         endpoint: http://localhost:8123
@@ -57,6 +59,19 @@ Daarnaast kan er in de betreffende functie extra informatie aan de Span worden t
     innerContext.setProcessingActivityId("4321");
     innerSpan.end();
 ```
+
+### Uitschakelen tijdens testen
+
+Om de database en OpenTelemetry functionaliteit uit te schakelen tijdens testen, stel je `logboekdataverwerking.enabled=false` in je test configuratie bestand:
+
+**test/resources/application.properties:**
+```
+logboekdataverwerking.enabled=false
+```
+
+Wanneer uitgeschakeld, worden er geen verbindingen met de database gemaakt.
+
+
 
 ## TODO's
 

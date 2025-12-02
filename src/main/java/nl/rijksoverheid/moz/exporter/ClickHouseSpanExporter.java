@@ -22,16 +22,30 @@ public class ClickHouseSpanExporter implements SpanExporter {
     private final ClickHouseRepository repository;
     private final ObjectMapper objectMapper;
     private final String tableName;
+    private final boolean enabled;
 
     public ClickHouseSpanExporter() throws ConfigurationException {
-        this.repository = new ClickHouseRepository();
+        this.enabled = ConfigurationLoader.getConfiguration()
+                .getBoolean("logboekdataverwerking.enabled", true);
+
+        if (enabled) {
+            this.repository = new ClickHouseRepository();
+            this.tableName = ConfigurationLoader.getString("logboekdataverwerking.clickhouse.table");
+            this.repository.ensureSchema();
+        } else {
+            this.repository = null;
+            this.tableName = null;
+        }
         this.objectMapper = new ObjectMapper();
-        this.tableName = ConfigurationLoader.getString("logboekdataverwerking.clickhouse.table");
-        this.repository.ensureSchema();
     }
 
     @Override
     public CompletableResultCode export(Collection<SpanData> spans) {
+
+        if (!enabled) {
+            return CompletableResultCode.ofSuccess();
+        }
+
         StringBuilder payload = new StringBuilder();
 
         for (SpanData span : spans) {
