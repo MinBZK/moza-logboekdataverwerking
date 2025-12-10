@@ -10,7 +10,7 @@
 
     <name>Logboek Dataverwerkingen MOZa</name>
     <description>Java utilities to integrate the Logboek Dataverwerkingen (LDV) standard by Logius.</description>
-    <url>https://github.com/moz/moza-logboekdataverwerking</url>
+    <url>https://github.com/MinBZK/moza-logboekdataverwerking</url>
 
     <licenses>
         <license>
