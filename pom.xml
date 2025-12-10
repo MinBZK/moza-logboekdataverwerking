@@ -22,8 +22,8 @@
 
     <developers>
         <developer>
-            <id>moza-team</id>
-            <name>MijnOverheid Zakelijk Team</name>
+            <id>moza</id>
+            <name>MijnOverheid Zakelijk</name>
             <organization>Logius</organization>
             <organizationUrl>https://www.logius.nl/</organizationUrl>
         </developer>
