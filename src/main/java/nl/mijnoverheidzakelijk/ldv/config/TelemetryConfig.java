@@ -1,4 +1,4 @@
-package nl.rijksoverheid.moz.config;
+package nl.mijnoverheidzakelijk.ldv.config;
 
 import io.opentelemetry.api.OpenTelemetry;
 import io.opentelemetry.api.common.AttributeKey;
@@ -7,7 +7,7 @@ import io.opentelemetry.sdk.OpenTelemetrySdk;
 import io.opentelemetry.sdk.resources.Resource;
 import io.opentelemetry.sdk.trace.SdkTracerProvider;
 import io.opentelemetry.sdk.trace.export.BatchSpanProcessor;
-import nl.rijksoverheid.moz.exporter.ClickHouseSpanExporter;
+import nl.mijnoverheidzakelijk.ldv.exporter.ClickHouseSpanExporter;
 import org.apache.commons.configuration2.ex.ConfigurationException;
 
 public final class TelemetryConfig {

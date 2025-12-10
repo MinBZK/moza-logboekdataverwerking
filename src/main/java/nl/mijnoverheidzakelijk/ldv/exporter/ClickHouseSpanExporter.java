@@ -1,11 +1,11 @@
-package nl.rijksoverheid.moz.exporter;
+package nl.mijnoverheidzakelijk.ldv.exporter;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.opentelemetry.sdk.common.CompletableResultCode;
 import io.opentelemetry.sdk.trace.data.SpanData;
 import io.opentelemetry.sdk.trace.export.SpanExporter;
-import nl.rijksoverheid.moz.config.ConfigurationLoader;
-import nl.rijksoverheid.moz.repository.ClickHouseRepository;
+import nl.mijnoverheidzakelijk.ldv.config.ConfigurationLoader;
+import nl.mijnoverheidzakelijk.ldv.repository.ClickHouseRepository;
 import org.apache.commons.configuration2.ex.ConfigurationException;
 
 import java.util.Collection;

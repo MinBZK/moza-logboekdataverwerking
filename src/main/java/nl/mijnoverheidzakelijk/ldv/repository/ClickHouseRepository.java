@@ -1,8 +1,8 @@
-package nl.rijksoverheid.moz.repository;
+package nl.mijnoverheidzakelijk.ldv.repository;
 
 import com.clickhouse.client.api.Client;
 import com.clickhouse.data.ClickHouseFormat;
-import nl.rijksoverheid.moz.config.ConfigurationLoader;
+import nl.mijnoverheidzakelijk.ldv.config.ConfigurationLoader;
 import org.apache.commons.configuration2.ex.ConfigurationException;
 
 import java.io.ByteArrayInputStream;

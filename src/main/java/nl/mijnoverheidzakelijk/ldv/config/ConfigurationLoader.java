@@ -1,4 +1,4 @@
-package nl.rijksoverheid.moz.config;
+package nl.mijnoverheidzakelijk.ldv.config;
 
 import org.apache.commons.configuration2.ex.ConfigurationException;
 import org.eclipse.microprofile.config.Config;

@@ -1,4 +1,4 @@
-package nl.rijksoverheid.moz.logboekdataverwerking;
+package nl.mijnoverheidzakelijk.ldv.logboekdataverwerking;
 
 import io.opentelemetry.api.trace.Span;
 import io.opentelemetry.api.trace.propagation.W3CTraceContextPropagator;

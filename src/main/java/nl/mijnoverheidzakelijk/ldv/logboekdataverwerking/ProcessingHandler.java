@@ -1,12 +1,12 @@
-package nl.rijksoverheid.moz.logboekdataverwerking;
+package nl.mijnoverheidzakelijk.ldv.logboekdataverwerking;
 
 import io.opentelemetry.api.OpenTelemetry;
 import io.opentelemetry.api.trace.Span;
 import io.opentelemetry.api.trace.Tracer;
 import io.opentelemetry.context.Context;
 import jakarta.enterprise.context.ApplicationScoped;
-import nl.rijksoverheid.moz.config.ConfigurationLoader;
-import nl.rijksoverheid.moz.config.TelemetryConfig;
+import nl.mijnoverheidzakelijk.ldv.config.ConfigurationLoader;
+import nl.mijnoverheidzakelijk.ldv.config.TelemetryConfig;
 import org.apache.commons.configuration2.ex.ConfigurationException;
 
 @ApplicationScoped

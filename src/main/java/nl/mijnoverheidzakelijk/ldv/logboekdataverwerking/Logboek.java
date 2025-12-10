@@ -1,4 +1,4 @@
-package nl.rijksoverheid.moz.logboekdataverwerking;
+package nl.mijnoverheidzakelijk.ldv.logboekdataverwerking;
 
 
 import jakarta.enterprise.util.Nonbinding;

@@ -1,4 +1,4 @@
-package nl.rijksoverheid.moz.logboekdataverwerking;
+package nl.mijnoverheidzakelijk.ldv.logboekdataverwerking;
 
 import io.opentelemetry.api.trace.StatusCode;
 import jakarta.enterprise.context.RequestScoped;
