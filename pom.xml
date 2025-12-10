@@ -30,9 +30,9 @@
     </developers>
 
     <scm>
-        <connection>scm:git:https://github.com/moz/moza-logboekdataverwerking.git</connection>
-        <developerConnection>scm:git:ssh://git@github.com/moz/moza-logboekdataverwerking.git</developerConnection>
-        <url>https://github.com/moz/moza-logboekdataverwerking</url>
+        <connection>scm:git:https://github.com/MinBZK/moza-logboekdataverwerking.git</connection>
+        <developerConnection>scm:git:ssh://git@github.com/MinBZK/moza-logboekdataverwerking.git</developerConnection>
+        <url>https://github.com/MinBZK/moza-logboekdataverwerking</url>
         <tag>HEAD</tag>
     </scm>
 
