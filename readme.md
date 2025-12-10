@@ -18,6 +18,7 @@ Dit Open Source project is opgezet om de LDV standaard eenvoudig aan nieuwe of b
 ## Hoe te gebruiken
 
 Om deze package te gebruiken moet je in je (maven) project de volgende variablen in je `application.properties` file toevoegen:
+
 ```
 logboekdataverwerking.service-name=service-name
 logboekdataverwerking.clickhouse.endpoint=http://localhost:8123
@@ -28,6 +29,7 @@ logboekdataverwerking.clickhouse.table=table_name
 ```
 
 of `application.yml`:
+
 ```
 logboekdataverwerking:
     service-name: service-name
@@ -77,7 +79,3 @@ Daarnaast kan er in de betreffende functie extra informatie aan de Span worden t
         return Response.ok("Hello world").build();
     }
 ```
-
-## TODO's
-
-- We zoeken nog een overheidsbreed beschikbare Maven repository voor het hosten van de package, zodat developers deze eenvoudig kunnen importeren in hun Java oplossingen.

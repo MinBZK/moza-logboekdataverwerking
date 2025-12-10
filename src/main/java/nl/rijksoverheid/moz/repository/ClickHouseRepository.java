@@ -3,12 +3,9 @@ package nl.rijksoverheid.moz.repository;
 import com.clickhouse.client.api.Client;
 import com.clickhouse.data.ClickHouseFormat;
 import nl.rijksoverheid.moz.config.ConfigurationLoader;
-import org.apache.commons.configuration2.Configuration;
-import org.apache.commons.configuration2.builder.fluent.Configurations;
 import org.apache.commons.configuration2.ex.ConfigurationException;
 
 import java.io.ByteArrayInputStream;
-import java.io.File;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.TimeUnit;
@@ -16,22 +13,18 @@ import java.util.concurrent.TimeUnit;
 public class ClickHouseRepository {
     private final Client client;
 
-    Configuration config;
     public ClickHouseRepository() throws ConfigurationException {
-        Configurations configs = new Configurations();
-        this.config = configs.properties(new File("application.properties"));
-
         this.client = new Client.Builder()
-                .addEndpoint(ConfigurationLoader.getString("logboekdataverwerking.clickhouse.endpoint"))
-                .setUsername(ConfigurationLoader.getString("logboekdataverwerking.clickhouse.username"))
-                .setPassword(ConfigurationLoader.getString("logboekdataverwerking.clickhouse.password"))
-                .setDefaultDatabase(ConfigurationLoader.getString("logboekdataverwerking.clickhouse.database"))
+                .addEndpoint(ConfigurationLoader.getValueByKey("logboekdataverwerking.clickhouse.endpoint", String.class))
+                .setUsername(ConfigurationLoader.getValueByKey("logboekdataverwerking.clickhouse.username", String.class))
+                .setPassword(ConfigurationLoader.getValueByKey("logboekdataverwerking.clickhouse.password", String.class))
+                .setDefaultDatabase(ConfigurationLoader.getValueByKey("logboekdataverwerking.clickhouse.database", String.class))
                 .build();
 
     }
 
     public void ensureSchema() throws ConfigurationException {
-        String table = ConfigurationLoader.getString("logboekdataverwerking.clickhouse.table");
+        String table = ConfigurationLoader.getValueByKey("logboekdataverwerking.clickhouse.table", String.class);
         try {
             // Schema matching SpanData structure (camelCase)
             client.query("CREATE TABLE IF NOT EXISTS " + table + " (\n" +
@@ -47,7 +40,7 @@ public class ClickHouseRepository {
                             ")\n" +
                             "ENGINE = MergeTree()\n" +
                             "ORDER BY (traceId, spanId);")
-                    .get(3, TimeUnit.SECONDS);
+                    .get(30, TimeUnit.SECONDS);
         } catch (Exception e) {
             throw new RuntimeException("Failed to ensure ClickHouse schema", e);
         }
