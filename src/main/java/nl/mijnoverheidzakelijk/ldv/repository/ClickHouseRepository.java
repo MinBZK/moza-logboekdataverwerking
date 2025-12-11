@@ -1,37 +1,44 @@
-package nl.rijksoverheid.moz.repository;
+package nl.mijnoverheidzakelijk.ldv.repository;
 
 import com.clickhouse.client.api.Client;
 import com.clickhouse.data.ClickHouseFormat;
-import nl.rijksoverheid.moz.config.ConfigurationLoader;
-import org.apache.commons.configuration2.Configuration;
-import org.apache.commons.configuration2.builder.fluent.Configurations;
+import nl.mijnoverheidzakelijk.ldv.config.ConfigurationLoader;
 import org.apache.commons.configuration2.ex.ConfigurationException;
 
 import java.io.ByteArrayInputStream;
-import java.io.File;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.TimeUnit;
 
+/**
+ * Repository encapsulating basic ClickHouse operations used by the exporter.
+ */
 public class ClickHouseRepository {
     private final Client client;
 
-    Configuration config;
+    /**
+     * Creates a ClickHouse client using configuration values.
+     *
+     * @throws ConfigurationException if configuration cannot be read
+     */
     public ClickHouseRepository() throws ConfigurationException {
-        Configurations configs = new Configurations();
-        this.config = configs.properties(new File("application.properties"));
-
         this.client = new Client.Builder()
-                .addEndpoint(ConfigurationLoader.getString("logboekdataverwerking.clickhouse.endpoint"))
-                .setUsername(ConfigurationLoader.getString("logboekdataverwerking.clickhouse.username"))
-                .setPassword(ConfigurationLoader.getString("logboekdataverwerking.clickhouse.password"))
-                .setDefaultDatabase(ConfigurationLoader.getString("logboekdataverwerking.clickhouse.database"))
+                .addEndpoint(ConfigurationLoader.getValueByKey("logboekdataverwerking.clickhouse.endpoint", String.class))
+                .setUsername(ConfigurationLoader.getValueByKey("logboekdataverwerking.clickhouse.username", String.class))
+                .setPassword(ConfigurationLoader.getValueByKey("logboekdataverwerking.clickhouse.password", String.class))
+                .setDefaultDatabase(ConfigurationLoader.getValueByKey("logboekdataverwerking.clickhouse.database", String.class))
                 .build();
 
     }
 
+    /**
+     * Ensures that the target table exists with the expected schema.
+     *
+     * @throws ConfigurationException if the table name cannot be resolved
+     * @throws RuntimeException       if the DDL operation fails
+     */
     public void ensureSchema() throws ConfigurationException {
-        String table = ConfigurationLoader.getString("logboekdataverwerking.clickhouse.table");
+        String table = ConfigurationLoader.getValueByKey("logboekdataverwerking.clickhouse.table", String.class);
         try {
             // Schema matching SpanData structure (camelCase)
             client.query("CREATE TABLE IF NOT EXISTS " + table + " (\n" +
@@ -47,12 +54,19 @@ public class ClickHouseRepository {
                             ")\n" +
                             "ENGINE = MergeTree()\n" +
                             "ORDER BY (traceId, spanId);")
-                    .get(3, TimeUnit.SECONDS);
+                    .get(30, TimeUnit.SECONDS);
         } catch (Exception e) {
             throw new RuntimeException("Failed to ensure ClickHouse schema", e);
         }
     }
 
+    /**
+     * Inserts a JSON payload into the specified table.
+     *
+     * @param table              the target table name
+     * @param jsonEachRowPayload payload where each line is a JSON object
+     * @throws RuntimeException if the insert fails
+     */
     public void insertJsonEachRow(String table, String jsonEachRowPayload) {
         try {
             InputStream data = new ByteArrayInputStream(jsonEachRowPayload.getBytes(StandardCharsets.UTF_8));
