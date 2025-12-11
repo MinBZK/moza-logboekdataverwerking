@@ -10,9 +10,17 @@ import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.TimeUnit;
 
+/**
+ * Repository encapsulating basic ClickHouse operations used by the exporter.
+ */
 public class ClickHouseRepository {
     private final Client client;
 
+    /**
+     * Creates a ClickHouse client using configuration values.
+     *
+     * @throws ConfigurationException if configuration cannot be read
+     */
     public ClickHouseRepository() throws ConfigurationException {
         this.client = new Client.Builder()
                 .addEndpoint(ConfigurationLoader.getValueByKey("logboekdataverwerking.clickhouse.endpoint", String.class))
@@ -23,6 +31,12 @@ public class ClickHouseRepository {
 
     }
 
+    /**
+     * Ensures that the target table exists with the expected schema.
+     *
+     * @throws ConfigurationException if the table name cannot be resolved
+     * @throws RuntimeException       if the DDL operation fails
+     */
     public void ensureSchema() throws ConfigurationException {
         String table = ConfigurationLoader.getValueByKey("logboekdataverwerking.clickhouse.table", String.class);
         try {
@@ -46,6 +60,13 @@ public class ClickHouseRepository {
         }
     }
 
+    /**
+     * Inserts a JSON payload into the specified table.
+     *
+     * @param table              the target table name
+     * @param jsonEachRowPayload payload where each line is a JSON object
+     * @throws RuntimeException if the insert fails
+     */
     public void insertJsonEachRow(String table, String jsonEachRowPayload) {
         try {
             InputStream data = new ByteArrayInputStream(jsonEachRowPayload.getBytes(StandardCharsets.UTF_8));
