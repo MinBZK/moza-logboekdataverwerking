@@ -8,14 +8,14 @@
     <artifactId>logboekdataverwerking-wrapper</artifactId>
     <version>1.1.0-SNAPSHOT</version>
 
-    <name>Logboek Dataverwerkingen MOZa</name>
+    <name>Logboek Dataverwerkingen Clickhouse</name>
     <description>Java utilities to integrate the Logboek Dataverwerkingen (LDV) standard by Logius.</description>
     <url>https://github.com/MinBZK/moza-logboekdataverwerking</url>
 
     <licenses>
         <license>
-            <name>Apache License, Version 2.0</name>
-            <url>https://www.apache.org/licenses/LICENSE-2.0</url>
+            <name>European Union Public License 1.2</name>
+            <url>https://eupl.eu/1.2/en/</url>
             <distribution>repo</distribution>
         </license>
     </licenses>
@@ -25,8 +25,7 @@
             <id>moza</id>
             <name>MijnOverheid Zakelijk</name>
             <email>tijmen.brink@rijksoverheid.nl</email>
-            <organization>Logius</organization>
-            <organizationUrl>https://www.logius.nl/</organizationUrl>
+            <organization>MinBZK</organization>
         </developer>
     </developers>
 
@@ -121,7 +120,7 @@
 
     <build>
         <plugins>
-            <!-- Attach sources and javadocs as required by Maven Central -->
+            <!-- Attach sources and Javadocs as required by Maven Central -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-source-plugin</artifactId>
@@ -211,9 +210,6 @@
                                 </goals>
                             </execution>
                         </executions>
-                        <configuration>
-                            <keyname>223BE282D097EA76</keyname>
-                        </configuration>
                     </plugin>
                 </plugins>
             </build>
