@@ -24,6 +24,7 @@
         <developer>
             <id>moza</id>
             <name>MijnOverheid Zakelijk</name>
+            <email>tijmen.brink@rijksoverheid.nl</email>
             <organization>Logius</organization>
             <organizationUrl>https://www.logius.nl/</organizationUrl>
         </developer>
@@ -70,7 +71,7 @@
         <dependency>
             <groupId>commons-beanutils</groupId>
             <artifactId>commons-beanutils</artifactId>
-            <version>1.9.4</version>
+            <version>1.11.0</version>
         </dependency>
         <dependency>
             <groupId>com.fasterxml.jackson.core</groupId>
@@ -165,7 +166,6 @@
                     </execution>
                 </executions>
             </plugin>
-            <!-- Staging to OSSRH / Maven Central -->
             <plugin>
                 <groupId>org.sonatype.plugins</groupId>
                 <artifactId>nexus-staging-maven-plugin</artifactId>
@@ -201,7 +201,7 @@
                     <plugin>
                         <groupId>org.apache.maven.plugins</groupId>
                         <artifactId>maven-gpg-plugin</artifactId>
-                        <version>3.2.4</version>
+                        <version>3.2.8</version>
                         <executions>
                             <execution>
                                 <id>sign-artifacts</id>
@@ -211,6 +211,9 @@
                                 </goals>
                             </execution>
                         </executions>
+                        <configuration>
+                            <keyname>223BE282D097EA76</keyname>
+                        </configuration>
                     </plugin>
                 </plugins>
             </build>

@@ -79,3 +79,13 @@ Daarnaast kan er in de betreffende functie extra informatie aan de Span worden t
         return Response.ok("Hello world").build();
     }
 ```
+### Uitschakelen tijdens testen
+
+Om de database en OpenTelemetry functionaliteit uit te schakelen tijdens testen, stel je `logboekdataverwerking.enabled=false` in je test configuratie bestand:
+
+**test/resources/application.properties:**
+```
+logboekdataverwerking.enabled=false
+```
+
+Wanneer uitgeschakeld, worden er geen verbindingen met de database gemaakt.
