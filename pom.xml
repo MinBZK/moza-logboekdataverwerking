@@ -41,6 +41,13 @@
         <maven.compiler.target>21</maven.compiler.target>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     </properties>
+
+    <pluginRepositories>
+        <pluginRepository>
+            <id>central</id>
+            <url>https://repo.maven.apache.org/maven2</url>
+        </pluginRepository>
+    </pluginRepositories>
     <dependencies>
         <dependency>
             <groupId>com.clickhouse</groupId>
@@ -179,7 +186,7 @@
         </plugins>
     </build>
 
-    <!-- Distribution management for OSSRH (Maven Central) -->
+    <!-- Distribution management for OSSRH -->
     <distributionManagement>
         <snapshotRepository>
             <id>ossrh</id>
