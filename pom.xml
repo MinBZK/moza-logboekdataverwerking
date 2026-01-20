@@ -52,7 +52,7 @@
         <dependency>
             <groupId>com.clickhouse</groupId>
             <artifactId>client-v2</artifactId>
-            <version>0.9.2</version>
+            <version>0.9.6</version>
         </dependency>
         <dependency>
             <groupId>io.opentelemetry</groupId>
@@ -112,7 +112,7 @@
         <dependency>
             <groupId>jakarta.servlet</groupId>
             <artifactId>jakarta.servlet-api</artifactId>
-            <version>6.2.0-M1</version>
+            <version>6.1.0</version>
             <scope>provided</scope>
         </dependency>
 
