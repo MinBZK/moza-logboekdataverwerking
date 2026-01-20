@@ -1,0 +1,91 @@
+package nl.mijnoverheidzakelijk.ldv.repository
+
+import com.clickhouse.client.api.Client
+import com.clickhouse.data.ClickHouseFormat
+import nl.mijnoverheidzakelijk.ldv.config.ConfigurationLoader
+import org.apache.commons.configuration2.ex.ConfigurationException
+import java.io.ByteArrayInputStream
+import java.io.InputStream
+import java.nio.charset.StandardCharsets
+import java.util.concurrent.TimeUnit
+
+/**
+ * Repository encapsulating basic ClickHouse operations used by the exporter.
+ */
+class ClickHouseRepository {
+    private val client: Client = Client.Builder()
+        .addEndpoint(
+            ConfigurationLoader.getValueByKey(
+                "logboekdataverwerking.clickhouse.endpoint",
+                String::class.java
+            )
+        )
+        .setUsername(
+            ConfigurationLoader.getValueByKey(
+                "logboekdataverwerking.clickhouse.username",
+                String::class.java
+            )
+        )
+        .setPassword(
+            ConfigurationLoader.getValueByKey(
+                "logboekdataverwerking.clickhouse.password",
+                String::class.java
+            )
+        )
+        .setDefaultDatabase(
+            ConfigurationLoader.getValueByKey(
+                "logboekdataverwerking.clickhouse.database",
+                String::class.java
+            )
+        )
+        .build()
+
+    /**
+     * Ensures that the target table exists with the expected schema.
+     * 
+     * @throws ConfigurationException if the table name cannot be resolved
+     * @throws RuntimeException       if the DDL operation fails
+     */
+    @Throws(ConfigurationException::class)
+    fun ensureSchema() {
+        val table =
+            ConfigurationLoader.getValueByKey("logboekdataverwerking.clickhouse.table", String::class.java)
+        try {
+            // Schema matching SpanData structure (camelCase)
+            client.query(
+                "CREATE TABLE IF NOT EXISTS " + table + " (\n" +
+                        "    traceId String,\n" +
+                        "    spanId String,\n" +
+                        "    status String,\n" +
+                        "    name String,\n" +
+                        "    startTime Int64,\n" +
+                        "    endTime Int64,\n" +
+                        "    parentSpanId String,\n" +
+                        "    attributes Map(String, String),\n" +
+                        "    resource Map(String, String)\n" +
+                        ")\n" +
+                        "ENGINE = MergeTree()\n" +
+                        "ORDER BY (traceId, spanId);"
+            )
+                .get(30, TimeUnit.SECONDS)
+        } catch (e: Exception) {
+            throw RuntimeException("Failed to ensure ClickHouse schema", e)
+        }
+    }
+
+    /**
+     * Inserts a JSON payload into the specified table.
+     * 
+     * @param table              the target table name
+     * @param jsonEachRowPayload payload where each line is a JSON object
+     * @throws RuntimeException if the insert fails
+     */
+    fun insertJsonEachRow(table: String?, jsonEachRowPayload: String) {
+        try {
+            val data: InputStream = ByteArrayInputStream(jsonEachRowPayload.toByteArray(StandardCharsets.UTF_8))
+            client.insert(table, data, ClickHouseFormat.JSONEachRow).get()
+        } catch (e: Exception) {
+            throw RuntimeException("Failed to insert into ClickHouse", e)
+        }
+    }
+}
