@@ -24,13 +24,13 @@ import jakarta.ws.rs.core.HttpHeaders
 @Interceptor
 class LogboekInterceptor {
     @Inject
-    lateinit var logboekContext: LogboekContext
+    private lateinit var logboekContext: LogboekContext
 
     @Context
-    lateinit var headers: HttpHeaders
+    private lateinit var headers: HttpHeaders
 
     @Inject
-    lateinit var handler: ProcessingHandler
+    private lateinit var handler: ProcessingHandler
 
     /**
      * Starts a span, proceeds with the intercepted invocation, and finalizes the span
@@ -45,13 +45,13 @@ class LogboekInterceptor {
     @Throws(Exception::class)
     fun log(context: InvocationContext): Any? {
         val propagatorInstance = W3CTraceContextPropagator.getInstance()
-        val traceContext = propagatorInstance.extract<HttpHeaders?>(
+        val traceContext = propagatorInstance.extract(
             io.opentelemetry.context.Context.current(),
             headers,
             HttpHeadersGetter()
         )
 
-        val annotation = context.method.getAnnotation<Logboek>(Logboek::class.java)
+        val annotation = context.method.getAnnotation(Logboek::class.java)
         val name = annotation.name
         val processingActivityId = annotation.processingActivityId
 
@@ -61,10 +61,7 @@ class LogboekInterceptor {
             span.makeCurrent().use { _ ->
                 return context.proceed()
             }
-        } catch (e: IllegalArgumentException) {
-            span.setStatus(StatusCode.ERROR)
-            throw e
-        } catch (e: IllegalStateException) {
+        } catch (e: Exception) {
             span.setStatus(StatusCode.ERROR)
             throw e
         } finally {
@@ -87,7 +84,6 @@ class LogboekInterceptor {
         }
     }
 
-
     /**
      * Extracts header values for the OpenTelemetry propagator from [HttpHeaders].
      */
@@ -105,11 +101,9 @@ class LogboekInterceptor {
          * @param key header name
          * @return the value for the header, or null if absent
          */
-        override fun get(httpHeaders: HttpHeaders?, key: String?): String? {
+        override fun get(httpHeaders: HttpHeaders?, key: String): String? {
             checkNotNull(httpHeaders)
             return httpHeaders.getHeaderString(key)
         }
     }
 }
-
-

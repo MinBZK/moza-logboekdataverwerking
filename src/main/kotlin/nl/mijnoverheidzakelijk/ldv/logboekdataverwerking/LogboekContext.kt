@@ -12,5 +12,5 @@ class LogboekContext {
     var processingActivityId: String? = null
     var dataSubjectId: String? = null
     var dataSubjectType: String? = null
-    var status: StatusCode? = null
+    var status: StatusCode = StatusCode.UNSET
 }
