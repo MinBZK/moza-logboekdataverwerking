@@ -172,10 +172,33 @@
             <version>1.14.7</version>
             <scope>test</scope>
         </dependency>
+        <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-simple</artifactId>
+            <version>2.0.16</version>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 
     <build>
+        <!-- Use Kotlin source directories instead of default Java directories -->
+        <sourceDirectory>src/main/kotlin</sourceDirectory>
+        <testSourceDirectory>src/test/java</testSourceDirectory>
         <plugins>
+            <!-- JVM flags for MockK/ByteBuddy compatibility:
+                 - EnableDynamicAgentLoading: MockK uses ByteBuddy to mock final classes and
+                   constructors at runtime. JDK 21+ warns about dynamic agent loading.
+                   In future JDK versions, this may need to be replaced with static agent loading.
+                 - Xshare:off: Disables Class Data Sharing which conflicts with ByteBuddy's
+                   bootstrap classpath modifications. CDS is a startup optimization not needed for tests. -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <version>3.5.2</version>
+                <configuration>
+                    <argLine>-XX:+EnableDynamicAgentLoading -Xshare:off</argLine>
+                </configuration>
+            </plugin>
             <!-- Attach sources and Javadocs as required by Maven Central -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
@@ -241,12 +264,6 @@
                         <goals>
                             <goal>compile</goal>
                         </goals>
-                        <configuration>
-                            <sourceDirs>
-                                <sourceDir>src/main/kotlin</sourceDir>
-                                <sourceDir>target/generated-sources/annotations</sourceDir>
-                            </sourceDirs>
-                        </configuration>
                     </execution>
                     <execution>
                         <id>test-compile</id>
