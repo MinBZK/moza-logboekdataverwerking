@@ -12,7 +12,6 @@ import io.opentelemetry.api.trace.Tracer
 import io.opentelemetry.context.Context
 import nl.mijnoverheidzakelijk.ldv.config.ConfigurationLoader
 import org.eclipse.microprofile.config.Config
-import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.BeforeEach
@@ -32,26 +31,18 @@ internal class ProcessingHandlerTest {
 
     companion object {
         private lateinit var mockConfig: Config
-        private lateinit var originalOpenTelemetry: OpenTelemetry
 
         @JvmStatic
         @BeforeAll
         fun setUpClass() {
-            // Mock ConfigurationLoader BEFORE ProcessingHandler is loaded
+            // Mock ConfigurationLoader BEFORE ProcessingHandler class is loaded
+            // (serviceName is still eagerly initialized, so config must be ready)
             mockConfig = mockk()
             every { mockConfig.getValue("logboekdataverwerking.service-name", String::class.java) } returns "test-service"
             every { mockConfig.getValue("logboekdataverwerking.enabled", Boolean::class.java) } returns false
             ConfigurationLoader.configProvider = { mockConfig }
-
-            // Now we can safely access ProcessingHandler (it will use mocked config)
-            originalOpenTelemetry = ProcessingHandler.openTelemetry
-        }
-
-        @JvmStatic
-        @AfterAll
-        fun tearDownClass() {
-            // Restore original OpenTelemetry
-            ProcessingHandler.openTelemetry = originalOpenTelemetry
+            // Note: With lazy initialization, we don't need to access openTelemetry here.
+            // Setting the mock in @BeforeEach prevents lazy init from running.
         }
     }
 

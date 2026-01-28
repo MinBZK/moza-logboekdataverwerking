@@ -56,19 +56,27 @@ class ProcessingHandler {
     }
 
     companion object {
-        var openTelemetry: OpenTelemetry = initOpenTelemetry()
-        val serviceName =
+        @Volatile
+        private var _openTelemetry: OpenTelemetry? = null
+
+        var openTelemetry: OpenTelemetry
+            get() = _openTelemetry ?: synchronized(this) {
+                _openTelemetry ?: initOpenTelemetry().also { _openTelemetry = it }
+            }
+            set(value) {
+                _openTelemetry = value
+            }
+
+        val serviceName: String =
             ConfigurationLoader.getValueByKey("logboekdataverwerking.service-name", String::class.java)
 
         /**
          * Initializes and returns the global [OpenTelemetry] instance.
-         * Subsequent calls return the already initialized instance.
+         * Uses double-checked locking for thread-safe lazy initialization.
          *
-         * @param serviceName the service name to be set on spans as a resource attribute
          * @return the initialized [OpenTelemetry] instance
          * @throws ConfigurationException if exporter configuration cannot be read
          */
-        @Synchronized
         @Throws(ConfigurationException::class)
         private fun initOpenTelemetry(): OpenTelemetry {
             val serviceName =
