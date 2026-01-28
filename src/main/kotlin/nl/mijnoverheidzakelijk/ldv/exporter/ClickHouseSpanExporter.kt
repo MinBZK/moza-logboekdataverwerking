@@ -20,7 +20,7 @@ import java.util.logging.Logger
  */
 class ClickHouseSpanExporter (
         private val repository: ClickHouseRepository = ClickHouseRepository(),
-        private val tableName: String = ConfigurationLoader.getValueByKey("logboekdataverwerking.clickhouse.table", String::class.java),
+        private val tableName: String = ConfigurationLoader.clickhouseTable,
         private val objectMapper: ObjectMapper = ObjectMapper()
     ) : SpanExporter {
 

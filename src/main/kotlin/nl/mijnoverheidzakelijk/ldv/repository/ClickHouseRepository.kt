@@ -14,30 +14,10 @@ import java.util.concurrent.TimeUnit
  */
 class ClickHouseRepository {
     private val client: Client = Client.Builder()
-        .addEndpoint(
-            ConfigurationLoader.getValueByKey(
-                "logboekdataverwerking.clickhouse.endpoint",
-                String::class.java
-            )
-        )
-        .setUsername(
-            ConfigurationLoader.getValueByKey(
-                "logboekdataverwerking.clickhouse.username",
-                String::class.java
-            )
-        )
-        .setPassword(
-            ConfigurationLoader.getValueByKey(
-                "logboekdataverwerking.clickhouse.password",
-                String::class.java
-            )
-        )
-        .setDefaultDatabase(
-            ConfigurationLoader.getValueByKey(
-                "logboekdataverwerking.clickhouse.database",
-                String::class.java
-            )
-        )
+        .addEndpoint(ConfigurationLoader.clickhouseEndpoint)
+        .setUsername(ConfigurationLoader.clickhouseUsername)
+        .setPassword(ConfigurationLoader.clickhousePassword)
+        .setDefaultDatabase(ConfigurationLoader.clickhouseDatabase)
         .build()
 
     /**
@@ -48,8 +28,7 @@ class ClickHouseRepository {
      */
     @Throws(ConfigurationException::class)
     fun ensureSchema() {
-        val table =
-            ConfigurationLoader.getValueByKey("logboekdataverwerking.clickhouse.table", String::class.java)
+        val table = ConfigurationLoader.clickhouseTable
         try {
             // Schema matching SpanData structure (camelCase)
             client.query(

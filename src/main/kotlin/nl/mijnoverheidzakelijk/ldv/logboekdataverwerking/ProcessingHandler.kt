@@ -67,8 +67,7 @@ class ProcessingHandler {
                 _openTelemetry = value
             }
 
-        val serviceName: String =
-            ConfigurationLoader.getValueByKey("logboekdataverwerking.service-name", String::class.java)
+        val serviceName: String = ConfigurationLoader.serviceName
 
         /**
          * Initializes and returns the global [OpenTelemetry] instance.
@@ -79,8 +78,7 @@ class ProcessingHandler {
          */
         @Throws(ConfigurationException::class)
         private fun initOpenTelemetry(): OpenTelemetry {
-            val serviceName =
-                ConfigurationLoader.getValueByKey("logboekdataverwerking.service-name", String::class.java)
+            val serviceName = ConfigurationLoader.serviceName
             println("Initializing open telemetry service: $serviceName")
 
             val resource = Resource.getDefault().merge(
@@ -92,7 +90,7 @@ class ProcessingHandler {
             )
 
             val exporter =
-                if (ConfigurationLoader.getValueByKey("logboekdataverwerking.enabled", Boolean::class.java))
+                if (ConfigurationLoader.enabled)
                     ClickHouseSpanExporter()
                 else
                     DummySpanExporter()

@@ -7,16 +7,13 @@ import org.eclipse.microprofile.config.ConfigProvider
 /**
  * Utility class providing access to application configuration via MicroProfile Config.
  *
- *
- * This class offers a shared [Config] instance as well as a helper method to
- * resolve typed configuration values by key.
+ * This class offers typed property accessors for all configuration values,
+ * encapsulating property keys and types in one place.
  */
 object ConfigurationLoader {
     /**
-     * Returns the shared MicroProfile [Config] instance.
-     *
-     * @return the configuration instance
-     * @throws ConfigurationException if configuration cannot be accessed
+     * Provider for the MicroProfile [Config] instance.
+     * Can be replaced in tests to provide mock configuration.
      */
     @get:Throws(ConfigurationException::class)
     @get:Synchronized
@@ -24,17 +21,40 @@ object ConfigurationLoader {
         ConfigProvider.getConfig()
     }
 
+    /** The service name used for OpenTelemetry spans. */
+    val serviceName: String
+        get() = getValue("logboekdataverwerking.service-name", String::class.java)
+
+    /** Whether the logboek data processing is enabled. */
+    val enabled: Boolean
+        get() = getValue("logboekdataverwerking.enabled", Boolean::class.java)
+
+    /** The ClickHouse server endpoint URL. */
+    val clickhouseEndpoint: String
+        get() = getValue("logboekdataverwerking.clickhouse.endpoint", String::class.java)
+
+    /** The ClickHouse username for authentication. */
+    val clickhouseUsername: String
+        get() = getValue("logboekdataverwerking.clickhouse.username", String::class.java)
+
+    /** The ClickHouse password for authentication. */
+    val clickhousePassword: String
+        get() = getValue("logboekdataverwerking.clickhouse.password", String::class.java)
+
+    /** The ClickHouse database name. */
+    val clickhouseDatabase: String
+        get() = getValue("logboekdataverwerking.clickhouse.database", String::class.java)
+
+    /** The ClickHouse table name for storing spans. */
+    val clickhouseTable: String
+        get() = getValue("logboekdataverwerking.clickhouse.table", String::class.java)
+
     /**
      * Resolves a configuration value by key and converts it to the given type.
-     *
-     * @param key    the configuration key
-     * @param tClass the expected type
-     * @param <T>    the generic type of the returned value
-     * @return the resolved value
-     * @throws ConfigurationException if the value cannot be loaded or converted
-    </T> */
+     * Use the typed property accessors above instead of calling this directly.
+     */
     @Throws(ConfigurationException::class)
-    fun <T> getValueByKey(key: String, tClass: Class<T>): T {
-        return configProvider().getValue<T>(key, tClass)
+    private fun <T> getValue(key: String, tClass: Class<T>): T {
+        return configProvider().getValue(key, tClass)
     }
 }
