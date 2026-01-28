@@ -15,6 +15,7 @@ import nl.mijnoverheidzakelijk.ldv.config.ConfigurationLoader
 import nl.mijnoverheidzakelijk.ldv.exporter.ClickHouseSpanExporter
 import nl.mijnoverheidzakelijk.ldv.exporter.DummySpanExporter
 import org.apache.commons.configuration2.ex.ConfigurationException
+import java.util.logging.Logger
 
 /**
  * Handles creation and enrichment of OpenTelemetry spans used by the Logboek
@@ -56,6 +57,8 @@ class ProcessingHandler {
     }
 
     companion object {
+        private val LOGGER: Logger = Logger.getLogger(ProcessingHandler::class.java.name)
+
         @Volatile
         private var _openTelemetry: OpenTelemetry? = null
 
@@ -78,8 +81,7 @@ class ProcessingHandler {
          */
         @Throws(ConfigurationException::class)
         private fun initOpenTelemetry(): OpenTelemetry {
-            val serviceName = ConfigurationLoader.serviceName
-            println("Initializing open telemetry service: $serviceName")
+            LOGGER.info("Initializing OpenTelemetry for service: $serviceName")
 
             val resource = Resource.getDefault().merge(
                 Resource.create(

@@ -145,26 +145,6 @@ internal class ClickHouseRepositoryTest {
         }
 
         @Test
-        fun `Handles null table name`() {
-            // given
-            val jsonPayload = """{"data":"value"}"""
-            val mockFuture: CompletableFuture<InsertResponse> = CompletableFuture.completedFuture(mockk())
-            every { mockClient.insert(any(), any<InputStream>(), any<ClickHouseFormat>()) } returns mockFuture
-
-            // when
-            repository.insertJsonEachRow(null, jsonPayload)
-
-            // then
-            verify {
-                mockClient.insert(
-                    isNull(),
-                    any<InputStream>(),
-                    eq(ClickHouseFormat.JSONEachRow)
-                )
-            }
-        }
-
-        @Test
         fun `Converts payload to UTF-8 bytes`() {
             // given
             val jsonPayload = """{"name":"tëst-üñíçödé"}"""

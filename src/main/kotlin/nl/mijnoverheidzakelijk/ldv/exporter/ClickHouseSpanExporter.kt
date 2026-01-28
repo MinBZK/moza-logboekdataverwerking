@@ -50,7 +50,7 @@ class ClickHouseSpanExporter (
                 payload.append(mappedString).append("\n")
             }
 
-            if (!payload.isEmpty()) {
+            if (payload.isNotEmpty()) {
                 repository.insertJsonEachRow(tableName, payload.toString())
             }
         } catch (e: Exception) {
@@ -69,22 +69,15 @@ class ClickHouseSpanExporter (
      */
     private fun mapSpanToJson(span: SpanData): Map<String, Any> {
         return mapOf(
-            Pair("traceId", span.traceId),
-            Pair("spanId", span.spanId),
-            Pair("status", span.status.statusCode.name),
-            Pair("name", span.name),
-            Pair("startTime", TimeUnit.NANOSECONDS.toMillis(span.startEpochNanos)),
-            Pair("endTime", TimeUnit.NANOSECONDS.toMillis(span.endEpochNanos)),
-            Pair("parentSpanId", span.parentSpanId),
-            Pair("attributes",
-                span.attributes.asMap().entries.associate {
-                    it.key.key to it.value.toString()
-                }
-            ),
-            Pair("resource",
-                span.resource.attributes.asMap().entries.associate {
-                    it.key.key to it.value.toString()
-                }),
+            "traceId" to span.traceId,
+            "spanId" to span.spanId,
+            "status" to span.status.statusCode.name,
+            "name" to span.name,
+            "startTime" to TimeUnit.NANOSECONDS.toMillis(span.startEpochNanos),
+            "endTime" to TimeUnit.NANOSECONDS.toMillis(span.endEpochNanos),
+            "parentSpanId" to span.parentSpanId,
+            "attributes" to span.attributes.asMap().entries.associate { it.key.key to it.value.toString() },
+            "resource" to span.resource.attributes.asMap().entries.associate { it.key.key to it.value.toString() }
         )
     }
 

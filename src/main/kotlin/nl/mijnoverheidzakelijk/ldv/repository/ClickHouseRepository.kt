@@ -32,21 +32,22 @@ class ClickHouseRepository {
         try {
             // Schema matching SpanData structure (camelCase)
             client.query(
-                "CREATE TABLE IF NOT EXISTS " + table + " (\n" +
-                        "    traceId String,\n" +
-                        "    spanId String,\n" +
-                        "    status String,\n" +
-                        "    name String,\n" +
-                        "    startTime Int64,\n" +
-                        "    endTime Int64,\n" +
-                        "    parentSpanId String,\n" +
-                        "    attributes Map(String, String),\n" +
-                        "    resource Map(String, String)\n" +
-                        ")\n" +
-                        "ENGINE = MergeTree()\n" +
-                        "ORDER BY (traceId, spanId);"
-            )
-                .get(30, TimeUnit.SECONDS)
+                """
+                CREATE TABLE IF NOT EXISTS $table (
+                    traceId String,
+                    spanId String,
+                    status String,
+                    name String,
+                    startTime Int64,
+                    endTime Int64,
+                    parentSpanId String,
+                    attributes Map(String, String),
+                    resource Map(String, String)
+                )
+                ENGINE = MergeTree()
+                ORDER BY (traceId, spanId);
+                """.trimIndent()
+            ).get(30, TimeUnit.SECONDS)
         } catch (e: Exception) {
             throw RuntimeException("Failed to ensure ClickHouse schema", e)
         }
@@ -54,12 +55,12 @@ class ClickHouseRepository {
 
     /**
      * Inserts a JSON payload into the specified table.
-     * 
+     *
      * @param table              the target table name
      * @param jsonEachRowPayload payload where each line is a JSON object
      * @throws RuntimeException if the insert fails
      */
-    fun insertJsonEachRow(table: String?, jsonEachRowPayload: String) {
+    fun insertJsonEachRow(table: String, jsonEachRowPayload: String) {
         try {
             val data: InputStream = ByteArrayInputStream(jsonEachRowPayload.toByteArray(StandardCharsets.UTF_8))
             client.insert(table, data, ClickHouseFormat.JSONEachRow).get()
