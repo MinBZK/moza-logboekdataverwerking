@@ -18,10 +18,11 @@ import java.util.logging.Logger
  * `logboekdataverwerking.enabled`. When enabled, it ensures the ClickHouse schema
  * exists and inserts exported spans into the configured table.
  */
-class ClickHouseSpanExporter : SpanExporter {
-    private val repository = ClickHouseRepository()
-    private val tableName: String = ConfigurationLoader.getValueByKey("logboekdataverwerking.clickhouse.table", String::class.java)
-    private val objectMapper = ObjectMapper()
+class ClickHouseSpanExporter (
+        private val repository: ClickHouseRepository = ClickHouseRepository(),
+        private val tableName: String = ConfigurationLoader.getValueByKey("logboekdataverwerking.clickhouse.table", String::class.java),
+        private val objectMapper: ObjectMapper = ObjectMapper()
+    ) : SpanExporter {
 
     /**
      * Creates a new exporter instance using configuration values provided via
@@ -30,9 +31,8 @@ class ClickHouseSpanExporter : SpanExporter {
      * @throws org.apache.commons.configuration2.ex.ConfigurationException if configuration cannot be read
      */
     init {
-        this.repository.ensureSchema()
+        repository.ensureSchema()
     }
-
 
     /**
      * Exports a collection of spans to ClickHouse. Spans are serialized to JSON.
@@ -43,24 +43,19 @@ class ClickHouseSpanExporter : SpanExporter {
     override fun export(spans: MutableCollection<SpanData>): CompletableResultCode {
         val payload = StringBuilder()
 
-        for (span in spans) {
-            val spanMap = mapSpanToJson(span)
-
-            try {
-                payload.append(objectMapper.writeValueAsString(spanMap)).append("\n")
-            } catch (e: Exception) {
-                LOGGER.log(Level.SEVERE, "Failed to serialize span data", e)
-                return CompletableResultCode.ofFailure()
+        try {
+            for (span in spans) {
+                val spanMap = mapSpanToJson(span)
+                val mappedString = objectMapper.writeValueAsString(spanMap)
+                payload.append(mappedString).append("\n")
             }
-        }
 
-        if (!payload.isEmpty()) {
-            try {
+            if (!payload.isEmpty()) {
                 repository.insertJsonEachRow(tableName, payload.toString())
-            } catch (e: Exception) {
-                LOGGER.log(Level.SEVERE, "Failed to insert spans into ClickHouse", e)
-                return CompletableResultCode.ofFailure()
             }
+        } catch (e: Exception) {
+            LOGGER.log(Level.SEVERE, "Failed to insert spans into ClickHouse", e)
+            return CompletableResultCode.ofFailure()
         }
 
         return CompletableResultCode.ofSuccess()

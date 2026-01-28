@@ -22,7 +22,6 @@ import org.apache.commons.configuration2.ex.ConfigurationException
  */
 @ApplicationScoped
 class ProcessingHandler {
-    private val tracer: Tracer = openTelemetry.getTracer(serviceName)
 
     /**
      * Starts a new span with the given name, optionally using an existing parent context.
@@ -32,6 +31,7 @@ class ProcessingHandler {
      * @return the started span
      */
     fun startSpan(name: String, context: Context?): Span {
+        val tracer: Tracer = openTelemetry.getTracer(serviceName)
         if (context != null) {
             return tracer.spanBuilder(name)
                 .setParent(context)
@@ -77,7 +77,7 @@ class ProcessingHandler {
 
             val resource = Resource.getDefault().merge(
                 Resource.create(
-                    Attributes.of<String>(
+                    Attributes.of(
                         AttributeKey.stringKey("service.name"), serviceName
                     )
                 )

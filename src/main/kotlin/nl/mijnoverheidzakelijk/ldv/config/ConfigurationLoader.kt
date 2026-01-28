@@ -20,7 +20,9 @@ object ConfigurationLoader {
      */
     @get:Throws(ConfigurationException::class)
     @get:Synchronized
-    val configuration: Config = ConfigProvider.getConfig()
+    internal var configProvider: () -> Config = {
+        ConfigProvider.getConfig()
+    }
 
     /**
      * Resolves a configuration value by key and converts it to the given type.
@@ -33,6 +35,6 @@ object ConfigurationLoader {
     </T> */
     @Throws(ConfigurationException::class)
     fun <T> getValueByKey(key: String, tClass: Class<T>): T {
-        return configuration.getValue<T>(key, tClass)
+        return configProvider().getValue<T>(key, tClass)
     }
 }
