@@ -21,15 +21,15 @@ import java.io.IOException
 
 @ExtendWith(MockKExtension::class)
 internal class ClickHouseSpanExporterTest {
-    private val repository: ClickHouseRepository = mockk(relaxed = true)
+    private val mockRepository: ClickHouseRepository = mockk(relaxed = true)
     private val tableName = "myTableName"
-    private val objectMapper: ObjectMapper = mockk(relaxed = true)
+    private val mockObjectMapper: ObjectMapper = mockk(relaxed = true)
 
     @SpyK(recordPrivateCalls = true)
     @InjectMockKs
     private lateinit var clickhouseSpanExporter: ClickHouseSpanExporter
 
-    private val testSpan: SpanData = mockk {
+    private val mockTestSpan: SpanData = mockk {
         every { traceId } returns "myTraceId"
         every { spanId } returns "mySpanId"
         every { status.statusCode } returns StatusCode.OK
@@ -61,35 +61,35 @@ internal class ClickHouseSpanExporterTest {
 
     @BeforeEach
     fun setUp() {
-        verify { repository.ensureSchema() }
+        verify { mockRepository.ensureSchema() }
     }
 
     @Test
-    fun `Call export with single span data, and expect a mapped string to be stored, with a success result` () {
+    fun `Export with single span stores mapped string and returns success`() {
         // given
         val realMapper = ObjectMapper()
-        every { objectMapper.writeValueAsString(any()) } answers {
+        every { mockObjectMapper.writeValueAsString(any()) } answers {
             // `arg<Any>(0)` is the map that the exporter built.
             realMapper.writeValueAsString(arg<Any>(0))
         }
 
         // when
-        val result = clickhouseSpanExporter.export(mutableSetOf(testSpan))
+        val result = clickhouseSpanExporter.export(mutableSetOf(mockTestSpan))
 
         // then
-        verify { clickhouseSpanExporter.export(mutableSetOf(testSpan)) }
-        verify { clickhouseSpanExporter["mapSpanToJson"](testSpan) }
-        verify { objectMapper.writeValueAsString(any()) }
-        verify { repository.insertJsonEachRow(tableName, "{\"traceId\":\"myTraceId\",\"spanId\":\"mySpanId\",\"status\":\"OK\",\"name\":\"myName\",\"startTime\":0,\"endTime\":0,\"parentSpanId\":\"myParentSpanId\",\"attributes\":{\"myAtrributeKey1\":\"myAttributeValue1\",\"myAtrributeKey2\":\"myAttributeValue2\"},\"resource\":{\"myResourceAtrributeKey1\":\"myResourceAttributeValue1\",\"myResourceAtrributeKey2\":\"myResourceAttributeValue2\"}}\n") }
-        confirmVerified(objectMapper, repository, clickhouseSpanExporter)
+        verify { clickhouseSpanExporter.export(mutableSetOf(mockTestSpan)) }
+        verify { clickhouseSpanExporter["mapSpanToJson"](mockTestSpan) }
+        verify { mockObjectMapper.writeValueAsString(any()) }
+        verify { mockRepository.insertJsonEachRow(tableName, "{\"traceId\":\"myTraceId\",\"spanId\":\"mySpanId\",\"status\":\"OK\",\"name\":\"myName\",\"startTime\":0,\"endTime\":0,\"parentSpanId\":\"myParentSpanId\",\"attributes\":{\"myAtrributeKey1\":\"myAttributeValue1\",\"myAtrributeKey2\":\"myAttributeValue2\"},\"resource\":{\"myResourceAtrributeKey1\":\"myResourceAttributeValue1\",\"myResourceAtrributeKey2\":\"myResourceAttributeValue2\"}}\n") }
+        confirmVerified(mockObjectMapper, mockRepository, clickhouseSpanExporter)
         assert(CompletableResultCode.ofSuccess() == result)
     }
 
     @Test
-    fun `Call export with no span data, and expect a mapped string to be stored with a success result` () {
+    fun `Export with no span data returns success without storing`() {
         // given
         val realMapper = ObjectMapper()
-        every { objectMapper.writeValueAsString(any()) } answers {
+        every { mockObjectMapper.writeValueAsString(any()) } answers {
             // `arg<Any>(0)` is the map that the exporter built.
             realMapper.writeValueAsString(arg<Any>(0))
         }
@@ -99,55 +99,55 @@ internal class ClickHouseSpanExporterTest {
 
         // then
         verify { clickhouseSpanExporter.export(mutableSetOf()) }
-        verify(inverse = true) { repository.insertJsonEachRow(tableName, "{\"traceId\":\"myTraceId\",\"spanId\":\"mySpanId\",\"status\":\"OK\",\"name\":\"myName\",\"startTime\":0,\"endTime\":0,\"parentSpanId\":\"myParentSpanId\",\"attributes\":{\"myAtrributeKey1\":\"myAttributeValue1\",\"myAtrributeKey2\":\"myAttributeValue2\"},\"resource\":{\"myResourceAtrributeKey1\":\"myResourceAttributeValue1\",\"myResourceAtrributeKey2\":\"myResourceAttributeValue2\"}}\n") }
-        confirmVerified(objectMapper, repository, clickhouseSpanExporter)
+        verify(inverse = true) { mockRepository.insertJsonEachRow(tableName, "{\"traceId\":\"myTraceId\",\"spanId\":\"mySpanId\",\"status\":\"OK\",\"name\":\"myName\",\"startTime\":0,\"endTime\":0,\"parentSpanId\":\"myParentSpanId\",\"attributes\":{\"myAtrributeKey1\":\"myAttributeValue1\",\"myAtrributeKey2\":\"myAttributeValue2\"},\"resource\":{\"myResourceAtrributeKey1\":\"myResourceAttributeValue1\",\"myResourceAtrributeKey2\":\"myResourceAttributeValue2\"}}\n") }
+        confirmVerified(mockObjectMapper, mockRepository, clickhouseSpanExporter)
         assert(CompletableResultCode.ofSuccess() == result)
     }
 
     @Test
-    fun `Call export, objectMapper throws exception, expect log and failure result` () {
+    fun `Export with objectMapper exception logs error and returns failure`() {
         // given
         val ioException = IOException("Oops")
-        every { objectMapper.writeValueAsString(any()) } throws ioException
+        every { mockObjectMapper.writeValueAsString(any()) } throws ioException
 
         // when
-        val result = clickhouseSpanExporter.export(mutableSetOf(testSpan))
+        val result = clickhouseSpanExporter.export(mutableSetOf(mockTestSpan))
 
         // then
-        verify { clickhouseSpanExporter.export(mutableSetOf(testSpan)) }
-        verify { clickhouseSpanExporter["mapSpanToJson"](testSpan) }
-        verify { objectMapper.writeValueAsString(any()) }
-        confirmVerified(objectMapper, repository, clickhouseSpanExporter)
+        verify { clickhouseSpanExporter.export(mutableSetOf(mockTestSpan)) }
+        verify { clickhouseSpanExporter["mapSpanToJson"](mockTestSpan) }
+        verify { mockObjectMapper.writeValueAsString(any()) }
+        confirmVerified(mockObjectMapper, mockRepository, clickhouseSpanExporter)
         assert(CompletableResultCode.ofFailure() == result)
     }
 
     @Test
-    fun `Call export, repository throws exception, expect log and failure result` () {
+    fun `Export with repository exception logs error and returns failure`() {
         // given
         val realMapper = ObjectMapper()
-        every { objectMapper.writeValueAsString(any()) } answers {
+        every { mockObjectMapper.writeValueAsString(any()) } answers {
             // `arg<Any>(0)` is the map that the exporter built.
             realMapper.writeValueAsString(arg<Any>(0))
         }
         val runtimeException = RuntimeException("Oops")
-        every { repository.insertJsonEachRow(any(), any()) } throws runtimeException
+        every { mockRepository.insertJsonEachRow(any(), any()) } throws runtimeException
 
         // when
-        val result = clickhouseSpanExporter.export(mutableSetOf(testSpan))
+        val result = clickhouseSpanExporter.export(mutableSetOf(mockTestSpan))
 
         // then
-        verify { clickhouseSpanExporter.export(mutableSetOf(testSpan)) }
-        verify { clickhouseSpanExporter["mapSpanToJson"](testSpan) }
-        verify { objectMapper.writeValueAsString(any()) }
-        verify { repository.insertJsonEachRow(tableName, "{\"traceId\":\"myTraceId\",\"spanId\":\"mySpanId\",\"status\":\"OK\",\"name\":\"myName\",\"startTime\":0,\"endTime\":0,\"parentSpanId\":\"myParentSpanId\",\"attributes\":{\"myAtrributeKey1\":\"myAttributeValue1\",\"myAtrributeKey2\":\"myAttributeValue2\"},\"resource\":{\"myResourceAtrributeKey1\":\"myResourceAttributeValue1\",\"myResourceAtrributeKey2\":\"myResourceAttributeValue2\"}}\n") }
-        confirmVerified(objectMapper, repository, clickhouseSpanExporter)
+        verify { clickhouseSpanExporter.export(mutableSetOf(mockTestSpan)) }
+        verify { clickhouseSpanExporter["mapSpanToJson"](mockTestSpan) }
+        verify { mockObjectMapper.writeValueAsString(any()) }
+        verify { mockRepository.insertJsonEachRow(tableName, "{\"traceId\":\"myTraceId\",\"spanId\":\"mySpanId\",\"status\":\"OK\",\"name\":\"myName\",\"startTime\":0,\"endTime\":0,\"parentSpanId\":\"myParentSpanId\",\"attributes\":{\"myAtrributeKey1\":\"myAttributeValue1\",\"myAtrributeKey2\":\"myAttributeValue2\"},\"resource\":{\"myResourceAtrributeKey1\":\"myResourceAttributeValue1\",\"myResourceAtrributeKey2\":\"myResourceAttributeValue2\"}}\n") }
+        confirmVerified(mockObjectMapper, mockRepository, clickhouseSpanExporter)
         assert(CompletableResultCode.ofFailure() == result)
 
         unmockkObject(ClickHouseSpanExporter)
     }
 
     @Test
-    fun `Call shutdown and expect success result` () {
+    fun `Shutdown returns success`() {
         // when
         val result = clickhouseSpanExporter.shutdown()
 
@@ -158,7 +158,7 @@ internal class ClickHouseSpanExporterTest {
     }
 
     @Test
-    fun `Call flush and expect success result` () {
+    fun `Flush returns success`() {
         // when
         val result = clickhouseSpanExporter.flush()
 
