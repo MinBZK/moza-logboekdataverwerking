@@ -1,0 +1,78 @@
+publiccodeYmlVersion: "0.5"
+name: Logboek Dataverwerkingen
+url: https://github.com/MinBZK/moza-logboekdataverwerking
+platforms:
+  - web
+categories:
+  - it-security
+  - data-analytics
+organisation:
+  uri: https://www.rijksoverheid.nl/ministeries/ministerie-van-binnenlandse-zaken-en-koninkrijksrelaties
+  name: Ministerie van Binnenlandse Zaken en Koninkrijksrelaties
+fundedBy:
+  - name: Ministerie van Binnenlandse Zaken en Koninkrijksrelaties
+    uri: https://www.rijksoverheid.nl/ministeries/ministerie-van-binnenlandse-zaken-en-koninkrijksrelaties
+developmentStatus: development
+softwareType: library
+intendedAudience:
+  countries:
+    - NL
+  scope:
+    - government
+description:
+  nl:
+    localisedName: Logboek Dataverwerkingen
+    shortDescription: >-
+      Kotlin-bibliotheek voor het loggen van dataverwerkingen volgens de
+      LDV-standaard.
+    longDescription: >
+      Logboek Dataverwerkingen is een Kotlin-bibliotheek die de Nederlandse
+      overheidsstandaard Logboek Dataverwerkingen (LDV) implementeert voor het
+      loggen van dataverwerkingen. De bibliotheek integreert met Jakarta EE
+      applicaties via CDI-interceptors en exporteert tracingdata naar
+      ClickHouse met behulp van OpenTelemetry.
+
+
+      De bibliotheek biedt annotatie-gebaseerde tracing via de @Logboek
+      annotatie, automatische extractie van W3C Trace Context uit HTTP-headers,
+      en een request-scoped context voor het verrijken van spans met
+      verwerkingsgegevens.
+    features:
+      - Annotatie-gebaseerde tracing via @Logboek
+      - Automatische W3C Trace Context extractie
+      - Export naar ClickHouse via OpenTelemetry
+      - Integratie met Jakarta EE via CDI-interceptors
+      - Request-scoped context voor verwerkingsgegevens
+  en:
+    shortDescription: >-
+      Kotlin library for logging data processing activities according to the
+      Dutch government Logboek Dataverwerkingen (LDV) standard.
+    longDescription: >
+      Logboek Dataverwerkingen is a Kotlin library implementing the Dutch
+      government Logboek Dataverwerkingen (LDV) standard for data processing
+      logging. It integrates with Jakarta EE applications via CDI interceptors
+      and exports tracing data to ClickHouse using OpenTelemetry.
+
+
+      The library provides annotation-based tracing via the @Logboek
+      annotation, automatic extraction of W3C Trace Context from HTTP headers,
+      and a request-scoped context for enriching spans with processing details.
+    features:
+      - Annotation-based tracing via @Logboek
+      - Automatic W3C Trace Context extraction
+      - Export to ClickHouse via OpenTelemetry
+      - Jakarta EE integration via CDI interceptors
+      - Request-scoped context for processing details
+legal:
+  license: EUPL-1.2
+  mainCopyrightOwner: Ministerie van Binnenlandse Zaken en Koninkrijksrelaties
+maintenance:
+  type: internal
+  contacts:
+    - name: MijnOverheid Zakelijk Team
+      email: moza@minbzk.nl
+      affiliation: Ministerie van Binnenlandse Zaken en Koninkrijksrelaties
+localisation:
+  localisationReady: false
+  availableLanguages:
+    - nl
