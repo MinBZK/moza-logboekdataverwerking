@@ -3,7 +3,7 @@
 ![Project Pre-Alpha Status](https://img.shields.io/badge/life_cycle-pre_alpha-red)
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/MinBZK/moza-logboekdataverwerking/badge)](https://scorecard.dev/viewer/?uri=github.com/MinBZK/moza-logboekdataverwerking)
 
-Dit is een Java implementatie van de - in ontwikkeling zijnde - standaard Logboek Dataverwerkingen (LDV) van Logius.
+Dit is een Kotlin implementatie van de - in ontwikkeling zijnde - standaard Logboek Dataverwerkingen (LDV) van Logius.
 
 ## Inleiding
 
@@ -11,7 +11,7 @@ Vanuit het programma MijnOverheid Zakelijk sluiten we zoveel mogelijk aan op de 
 
 ## Doel
 
-Dit Open Source project is opgezet om de LDV standaard eenvoudig aan nieuwe of bestaande Java oplossingen toe te voegen.
+Dit Open Source project is opgezet om de LDV standaard eenvoudig aan nieuwe of bestaande Java/Kotlin oplossingen toe te voegen.
 
 ## Afhankelijkheden
 
