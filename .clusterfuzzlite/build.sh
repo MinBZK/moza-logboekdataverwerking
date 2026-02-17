@@ -17,9 +17,9 @@ rsync -aL --exclude='*.zip' "$JAVA_HOME/" "$OUT/open-jdk-21/"
 
 # Create a wrapper script for every standalone fuzzer
 # (classes that define the static fuzzerTestOneInput method expected by jazzer_driver)
-for fuzzer in $(grep -rl "fuzzerTestOneInput" src/test/java/ || true); do
-  class_name=$(echo "$fuzzer" | sed 's|src/test/java/||;s|\.java$||;s|/|.|g')
-  simple_name=$(basename -s .java "$fuzzer")
+for fuzzer in $(grep -rl "fuzzerTestOneInput" src/test/kotlin/ || true); do
+  class_name=$(echo "$fuzzer" | sed 's|src/test/kotlin/||;s|\.kt$||;s|/|.|g')
+  simple_name=$(basename -s .kt "$fuzzer")
 
   echo "Creating fuzzer wrapper: $simple_name -> $class_name"
 
