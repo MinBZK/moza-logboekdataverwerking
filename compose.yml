@@ -1,0 +1,9 @@
+services:
+  clickhouse:
+    image: clickhouse/clickhouse-server:latest
+    ports:
+    - "8123:8123"
+    environment:
+      CLICKHOUSE_USER: "user"
+      CLICKHOUSE_PASSWORD: "password"
+      CLICKHOUSE_DB: "ldv_logging"
