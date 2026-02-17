@@ -189,7 +189,7 @@
     <build>
         <!-- Use Kotlin source directories instead of default Java directories -->
         <sourceDirectory>src/main/kotlin</sourceDirectory>
-        <testSourceDirectory>src/test/java</testSourceDirectory>
+        <testSourceDirectory>src/test/kotlin</testSourceDirectory>
         <plugins>
             <!-- JVM flags for MockK/ByteBuddy compatibility:
                  - EnableDynamicAgentLoading: MockK uses ByteBuddy to mock final classes and
