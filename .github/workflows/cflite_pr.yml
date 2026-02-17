@@ -18,6 +18,7 @@ jobs:
       with:
         language: jvm
         github-token: ${{ secrets.GITHUB_TOKEN }}
+        keep-unaffected-fuzz-targets: true
     - name: Run Fuzzers
       uses: google/clusterfuzzlite/actions/run_fuzzers@v1
       with:
