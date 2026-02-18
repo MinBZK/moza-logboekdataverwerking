@@ -22,13 +22,14 @@ class ClickHouseRepository {
 
     /**
      * Ensures that the target table exists with the expected schema.
-     * 
+     *
      * @throws ConfigurationException if the table name cannot be resolved
      * @throws RuntimeException       if the DDL operation fails
      */
     @Throws(ConfigurationException::class)
     fun ensureSchema() {
         val table = ConfigurationLoader.clickhouseTable
+        requireValidTableName(table)
         try {
             // Schema matching SpanData structure (camelCase)
             client.query(
@@ -61,11 +62,26 @@ class ClickHouseRepository {
      * @throws RuntimeException if the insert fails
      */
     fun insertJsonEachRow(table: String, jsonEachRowPayload: String) {
+        requireValidTableName(table)
         try {
             val data: InputStream = ByteArrayInputStream(jsonEachRowPayload.toByteArray(StandardCharsets.UTF_8))
             client.insert(table, data, ClickHouseFormat.JSONEachRow).get()
         } catch (e: Exception) {
             throw RuntimeException("Failed to insert into ClickHouse", e)
+        }
+    }
+
+    fun close() {
+        client.close()
+    }
+
+    companion object {
+        private val TABLE_NAME_PATTERN = Regex("^[a-zA-Z_][a-zA-Z0-9_.]*$")
+
+        private fun requireValidTableName(table: String) {
+            require(TABLE_NAME_PATTERN.matches(table)) {
+                "Invalid table name: $table"
+            }
         }
     }
 }

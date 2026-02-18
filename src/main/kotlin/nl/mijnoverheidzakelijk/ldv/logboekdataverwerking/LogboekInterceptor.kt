@@ -65,10 +65,10 @@ class LogboekInterceptor {
             span.setStatus(StatusCode.ERROR)
             throw e
         } finally {
-            val spanData = (span as ReadableSpan).toSpanData()
-
             if (headers.getHeaderString("traceparent") != null) {
-                span.setAttribute("dpl.core.foreign_operation.span_id", spanData.parentSpanId)
+                (span as? ReadableSpan)?.toSpanData()?.let { spanData ->
+                    span.setAttribute("dpl.core.foreign_operation.span_id", spanData.parentSpanId)
+                }
 
                 //todo hoe krijgen we de url, bijv. header. Hier is het team van LDV nog mee bezig.
                 //todo How do we get the url, ex. header. This is still being worked on by the LDV team.

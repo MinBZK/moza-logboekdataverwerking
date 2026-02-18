@@ -1,9 +1,9 @@
-# Logboek Dataverwerkingen Java implementatie
+# Logboek Dataverwerkingen JVM implementatie
 
 ![Project Pre-Alpha Status](https://img.shields.io/badge/life_cycle-pre_alpha-red)
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/MinBZK/moza-logboekdataverwerking/badge)](https://scorecard.dev/viewer/?uri=github.com/MinBZK/moza-logboekdataverwerking)
 
-Dit is een Kotlin implementatie van de - in ontwikkeling zijnde - standaard Logboek Dataverwerkingen (LDV) van Logius.
+Dit is een Kotlin implementatie van de - in ontwikkeling zijnde - standaard Logboek Dataverwerkingen (LDV) van Logius. De library is bruikbaar vanuit zowel Kotlin als Java projecten.
 
 ## Inleiding
 
@@ -22,7 +22,8 @@ Dit Open Source project is opgezet om de LDV standaard eenvoudig aan nieuwe of b
 
 Om deze package te gebruiken moet je in je (maven) project de volgende variablen in je `application.properties` file toevoegen:
 
-```
+```properties
+logboekdataverwerking.enabled=true
 logboekdataverwerking.service-name=service-name
 logboekdataverwerking.clickhouse.endpoint=http://localhost:8123
 logboekdataverwerking.clickhouse.username=user
@@ -33,8 +34,9 @@ logboekdataverwerking.clickhouse.table=table_name
 
 of `application.yml`:
 
-```
+```yaml
 logboekdataverwerking:
+    enabled: true
     service-name: service-name
     clickhouse:
         endpoint: http://localhost:8123
@@ -52,35 +54,63 @@ Hierbij is `name` de beschrijving van je eigen trace log en `processingActivityI
 
 Daarnaast kan er in de betreffende functie extra informatie aan de Span worden toegevoegd:
 
-```java
+**Kotlin:**
+```kotlin
+@Inject
+lateinit var handler: ProcessingHandler
 
-    @Inject
-    ProcessingHandler handler;
+@Inject
+lateinit var logboekContext: LogboekContext
 
-    @Inject
-    LogboekContext logboekContext;
-
-    @GET
-    @Path("/{identificatieType}/{identificatieNummer}")
-    @Logboek(name = "test", processingActivityId = "1")
-    public Response test() throws InterruptedException {
-        var innerSpan = handler.startSpan("span-2", null);
-        Thread.sleep(1000);
-        LogboekContext innerContext = new LogboekContext();
-        innerContext.setStatus(StatusCode.ERROR);
-        innerContext.setDataSubjectId("123");
-        innerContext.setDataSubjectType("BSN");
-        innerContext.setProcessingActivityId("4321");
-        innerContext.addLogboekContextToSpan(innerSpan);
-        innerSpan.end();
-
-        logboekContext.setDataSubjectId("000000000");
-        logboekContext.setDataSubjectType("KVK");
-        logboekContext.setStatus(StatusCode.OK);
-
-
-        return Response.ok("Hello world").build();
+@GET
+@Path("/{identificatieType}/{identificatieNummer}")
+@Logboek(name = "test", processingActivityId = "1")
+fun test(): Response {
+    val innerSpan = handler.startSpan("span-2", null)
+    val innerContext = LogboekContext().apply {
+        status = StatusCode.ERROR
+        dataSubjectId = "123"
+        dataSubjectType = "BSN"
+        processingActivityId = "4321"
     }
+    handler.addLogboekContextToSpan(innerSpan, innerContext)
+    innerSpan.end()
+
+    logboekContext.dataSubjectId = "000000000"
+    logboekContext.dataSubjectType = "KVK"
+    logboekContext.status = StatusCode.OK
+
+    return Response.ok("Hello world").build()
+}
+```
+
+**Java:**
+```java
+@Inject
+ProcessingHandler handler;
+
+@Inject
+LogboekContext logboekContext;
+
+@GET
+@Path("/{identificatieType}/{identificatieNummer}")
+@Logboek(name = "test", processingActivityId = "1")
+public Response test() {
+    var innerSpan = handler.startSpan("span-2", null);
+    LogboekContext innerContext = new LogboekContext();
+    innerContext.setStatus(StatusCode.ERROR);
+    innerContext.setDataSubjectId("123");
+    innerContext.setDataSubjectType("BSN");
+    innerContext.setProcessingActivityId("4321");
+    handler.addLogboekContextToSpan(innerSpan, innerContext);
+    innerSpan.end();
+
+    logboekContext.setDataSubjectId("000000000");
+    logboekContext.setDataSubjectType("KVK");
+    logboekContext.setStatus(StatusCode.OK);
+
+    return Response.ok("Hello world").build();
+}
 ```
 ### Uitschakelen tijdens testen
 

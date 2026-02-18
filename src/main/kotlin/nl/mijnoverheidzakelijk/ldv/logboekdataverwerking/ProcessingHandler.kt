@@ -70,7 +70,7 @@ class ProcessingHandler {
                 _openTelemetry = value
             }
 
-        val serviceName: String = ConfigurationLoader.serviceName
+        val serviceName: String by lazy { ConfigurationLoader.serviceName }
 
         /**
          * Initializes and returns the global [OpenTelemetry] instance.

@@ -89,11 +89,14 @@ class ClickHouseSpanExporter (
     override fun flush(): CompletableResultCode = CompletableResultCode.ofSuccess()
 
     /**
-     * Shuts down the exporter. No resources to free, returns success.
-     * 
+     * Shuts down the exporter and closes the underlying ClickHouse client.
+     *
      * @return success result code
      */
-    override fun shutdown(): CompletableResultCode = CompletableResultCode.ofSuccess()
+    override fun shutdown(): CompletableResultCode {
+        repository.close()
+        return CompletableResultCode.ofSuccess()
+    }
 
     companion object {
         private val LOGGER: Logger = Logger.getLogger(ClickHouseSpanExporter::class.java.getName())
