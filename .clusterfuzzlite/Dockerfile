@@ -1,4 +1,4 @@
-FROM gcr.io/oss-fuzz-base/base-builder-jvm:v1
+FROM gcr.io/oss-fuzz-base/base-builder-jvm:v1@sha256:73e9f2aaddb0a9ca97b137c1e7d8f2142203be6a5767be48a56888491edaf310
 
 # This library requires JDK 21 (base-builder-jvm ships JDK 17).
 RUN apt-get update && apt-get install -y openjdk-21-jdk rsync
