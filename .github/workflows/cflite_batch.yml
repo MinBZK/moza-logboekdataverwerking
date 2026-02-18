@@ -1,8 +1,8 @@
 name: ClusterFuzzLite Batch
 on:
   schedule:
-    # Weekly on Saturday at midnight
-    - cron: '0 0 * * 6'
+    # Weekly on Saturday at 1:00 AM
+    - cron: '0 1 * * 6'
   workflow_dispatch:
 permissions: read-all
 jobs:
