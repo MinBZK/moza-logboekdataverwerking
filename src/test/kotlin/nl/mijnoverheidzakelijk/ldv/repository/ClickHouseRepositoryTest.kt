@@ -18,6 +18,8 @@ import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
+import org.junit.jupiter.params.ParameterizedTest
+import org.junit.jupiter.params.provider.ValueSource
 import java.io.InputStream
 import java.util.concurrent.CompletableFuture
 
@@ -102,6 +104,40 @@ internal class ClickHouseRepositoryTest {
                 repository.ensureSchema()
             }
             assert(exception.message == "Failed to ensure ClickHouse schema")
+        }
+    }
+
+    @Nested
+    @DisplayName("requireValidTableName")
+    inner class RequireValidTableNameTests {
+
+        @Test
+        fun `Accepts valid simple table name`() {
+            val mockFuture: CompletableFuture<QueryResponse> = CompletableFuture.completedFuture(mockk())
+            every { mockClient.query(any<String>()) } returns mockFuture
+            every { mockConfig.getValue("logboekdataverwerking.clickhouse.table", String::class.java) } returns "valid_table_123"
+
+            repository.ensureSchema()
+
+            verify { mockClient.query(any<String>()) }
+        }
+
+        @Test
+        fun `Accepts table name with dot for schema-qualified names`() {
+            val mockFuture: CompletableFuture<InsertResponse> = CompletableFuture.completedFuture(mockk())
+            every { mockClient.insert(any<String>(), any<InputStream>(), any<ClickHouseFormat>()) } returns mockFuture
+
+            repository.insertJsonEachRow("schema.table_name", """{"key":"value"}""")
+
+            verify { mockClient.insert(eq("schema.table_name"), any<InputStream>(), eq(ClickHouseFormat.JSONEachRow)) }
+        }
+
+        @ParameterizedTest(name = "Rejects invalid table name: \"{0}\"")
+        @ValueSource(strings = ["'; DROP TABLE spans; --", "123table", "my table", ""])
+        fun `Rejects invalid table names`(invalidName: String) {
+            assertThrows<IllegalArgumentException> {
+                repository.insertJsonEachRow(invalidName, """{"key":"value"}""")
+            }
         }
     }
 

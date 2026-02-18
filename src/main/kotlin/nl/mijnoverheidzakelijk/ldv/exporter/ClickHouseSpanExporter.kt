@@ -94,8 +94,13 @@ class ClickHouseSpanExporter (
      * @return success result code
      */
     override fun shutdown(): CompletableResultCode {
-        repository.close()
-        return CompletableResultCode.ofSuccess()
+        return try {
+            repository.close()
+            CompletableResultCode.ofSuccess()
+        } catch (e: Exception) {
+            LOGGER.log(Level.SEVERE, "Failed to close ClickHouse client", e)
+            CompletableResultCode.ofFailure()
+        }
     }
 
     companion object {

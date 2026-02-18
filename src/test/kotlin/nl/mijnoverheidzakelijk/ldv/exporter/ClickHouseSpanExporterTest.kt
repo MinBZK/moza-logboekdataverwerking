@@ -147,14 +147,28 @@ internal class ClickHouseSpanExporterTest {
     }
 
     @Test
-    fun `Shutdown returns success`() {
+    fun `Shutdown closes repository and returns success`() {
         // when
         val result = clickhouseSpanExporter.shutdown()
 
         // then
+        verify { mockRepository.close() }
         verify { clickhouseSpanExporter.shutdown() }
-        confirmVerified(clickhouseSpanExporter)
+        confirmVerified(mockRepository, clickhouseSpanExporter)
         assert(CompletableResultCode.ofSuccess() == result)
+    }
+
+    @Test
+    fun `Shutdown returns failure when repository close throws`() {
+        // given
+        every { mockRepository.close() } throws RuntimeException("Connection error")
+
+        // when
+        val result = clickhouseSpanExporter.shutdown()
+
+        // then
+        verify { mockRepository.close() }
+        assert(CompletableResultCode.ofFailure() == result)
     }
 
     @Test
