@@ -10,7 +10,14 @@ import jakarta.enterprise.context.RequestScoped
 @RequestScoped
 class LogboekContext {
     var processingActivityId: String? = null
+    /**
+     * Versleuteld of gepseudonimiseerd ID van de betrokkene.
+     * Mag NOOIT een onversleuteld BSN of direct identificerend gegeven bevatten.
+     * Zie de LDV standaard: https://logius-standaarden.github.io/logboek-dataverwerkingen/
+     */
     var dataSubjectId: String? = null
+
     var dataSubjectType: String? = null
+
     var status: StatusCode = StatusCode.UNSET
 }

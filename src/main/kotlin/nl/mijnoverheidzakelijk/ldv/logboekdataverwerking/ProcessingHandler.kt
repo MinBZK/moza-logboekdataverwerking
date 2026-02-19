@@ -50,9 +50,24 @@ class ProcessingHandler {
      * @param logboekContext the context holding attributes
      */
     fun addLogboekContextToSpan(span: Span, logboekContext: LogboekContext) {
-        span.setAttribute("dpl.core.processing_activity_id", logboekContext.processingActivityId)
-        span.setAttribute("dpl.core.data_subject_id", logboekContext.dataSubjectId)
-        span.setAttribute("dpl.core.data_subject_id_type", logboekContext.dataSubjectType)
+        val processingActivityId = logboekContext.processingActivityId
+        val dataSubjectId = logboekContext.dataSubjectId
+        val dataSubjectType = logboekContext.dataSubjectType
+
+        require(!processingActivityId.isNullOrEmpty()) { "dpl.core.processing_activity_id is required by the LDV standard" }
+        require(!dataSubjectId.isNullOrEmpty()) { "dpl.core.data_subject_id is required by the LDV standard" }
+        require(!dataSubjectType.isNullOrEmpty()) { "dpl.core.data_subject_id_type is required by the LDV standard" }
+
+        try {
+            val uri = java.net.URI(processingActivityId)
+            require(uri.isAbsolute) { "dpl.core.processing_activity_id must be an absolute URI: $processingActivityId" }
+        } catch (e: java.net.URISyntaxException) {
+            throw IllegalArgumentException("dpl.core.processing_activity_id must be a valid URI: $processingActivityId", e)
+        }
+
+        span.setAttribute("dpl.core.processing_activity_id", processingActivityId)
+        span.setAttribute("dpl.core.data_subject_id", dataSubjectId)
+        span.setAttribute("dpl.core.data_subject_id_type", dataSubjectType)
         span.setStatus(logboekContext.status)
     }
 
