@@ -3,7 +3,7 @@ package nl.mijnoverheidzakelijk.ldv.logboekdataverwerking
 import io.opentelemetry.api.trace.StatusCode
 import io.opentelemetry.api.trace.propagation.W3CTraceContextPropagator
 import io.opentelemetry.context.propagation.TextMapGetter
-import io.opentelemetry.sdk.trace.ReadableSpan
+
 import jakarta.inject.Inject
 import jakarta.interceptor.AroundInvoke
 import jakarta.interceptor.Interceptor
@@ -66,10 +66,6 @@ class LogboekInterceptor {
             throw e
         } finally {
             if (headers.getHeaderString("traceparent") != null) {
-                (span as? ReadableSpan)?.toSpanData()?.let { spanData ->
-                    span.setAttribute("dpl.core.foreign_operation.span_id", spanData.parentSpanId)
-                }
-
                 //todo hoe krijgen we de url, bijv. header. Hier is het team van LDV nog mee bezig.
                 //todo How do we get the url, ex. header. This is still being worked on by the LDV team.
                 span.setAttribute(

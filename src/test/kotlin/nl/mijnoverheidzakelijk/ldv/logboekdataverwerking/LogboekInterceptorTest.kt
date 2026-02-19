@@ -7,8 +7,6 @@ import io.mockk.verify
 import io.opentelemetry.api.trace.Span
 import io.opentelemetry.api.trace.StatusCode
 import io.opentelemetry.context.Scope
-import io.opentelemetry.sdk.trace.ReadableSpan
-import io.opentelemetry.sdk.trace.data.SpanData
 import jakarta.interceptor.InvocationContext
 import jakarta.ws.rs.core.HttpHeaders
 import jakarta.ws.rs.core.MultivaluedHashMap
@@ -26,12 +24,6 @@ import org.junit.jupiter.api.assertThrows
 import java.lang.reflect.Field
 import java.lang.reflect.Method
 
-/**
- * Interface combining Span and ReadableSpan for testing purposes.
- * This allows us to mock both interfaces in a single mock object.
- */
-private interface TestableSpan : Span, ReadableSpan
-
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 internal class LogboekInterceptorTest {
 
@@ -40,9 +32,8 @@ internal class LogboekInterceptorTest {
     private lateinit var mockHeaders: HttpHeaders
     private lateinit var mockHandler: ProcessingHandler
     private lateinit var mockInvocationContext: InvocationContext
-    private lateinit var mockSpan: TestableSpan
+    private lateinit var mockSpan: Span
     private lateinit var mockScope: Scope
-    private lateinit var mockSpanData: SpanData
 
     companion object {
         private lateinit var mockConfig: Config
@@ -75,7 +66,6 @@ internal class LogboekInterceptorTest {
         mockInvocationContext = mockk()
         mockSpan = mockk(relaxed = true)
         mockScope = mockk(relaxed = true)
-        mockSpanData = mockk()
 
         // Inject mocks via reflection
         setPrivateField(interceptor, "logboekContext", mockLogboekContext)
@@ -85,8 +75,6 @@ internal class LogboekInterceptorTest {
         // Set up common mock behaviors
         every { mockHandler.startSpan(any(), any()) } returns mockSpan
         every { mockSpan.makeCurrent() } returns mockScope
-        every { mockSpan.toSpanData() } returns mockSpanData
-        every { mockSpanData.parentSpanId } returns "parent-span-id"
         every { mockHeaders.requestHeaders } returns MultivaluedHashMap()
         every { mockHeaders.getHeaderString(any()) } returns null
     }
@@ -108,7 +96,7 @@ internal class LogboekInterceptorTest {
      * because MockK cannot mock Method on JDK 25+.
      */
     private class AnnotatedMethods {
-        @Logboek(name = "test-span", processingActivityId = "activity-123")
+        @Logboek(name = "test-span", processingActivityId = "https://register.example.org/activiteiten/activity-123")
         fun testMethod() {}
     }
 
@@ -137,7 +125,7 @@ internal class LogboekInterceptorTest {
             verify { mockHandler.addLogboekContextToSpan(mockSpan, mockLogboekContext) }
             verify { mockSpan.end() }
             assert(result == "result")
-            assert(mockLogboekContext.processingActivityId == "activity-123")
+            assert(mockLogboekContext.processingActivityId == "https://register.example.org/activiteiten/activity-123")
         }
 
         @Test
@@ -210,7 +198,6 @@ internal class LogboekInterceptorTest {
             interceptor.log(mockInvocationContext)
 
             // then
-            verify { mockSpan.setAttribute("dpl.core.foreign_operation.span_id", "parent-span-id") }
             verify { mockSpan.setAttribute("dpl.core.foreign_operation.processor", "http://processor.example.com") }
         }
 
@@ -226,7 +213,6 @@ internal class LogboekInterceptorTest {
             interceptor.log(mockInvocationContext)
 
             // then
-            verify(inverse = true) { mockSpan.setAttribute("dpl.core.foreign_operation.span_id", any<String>()) }
             verify(inverse = true) { mockSpan.setAttribute("dpl.core.foreign_operation.processor", any<String>()) }
         }
     }

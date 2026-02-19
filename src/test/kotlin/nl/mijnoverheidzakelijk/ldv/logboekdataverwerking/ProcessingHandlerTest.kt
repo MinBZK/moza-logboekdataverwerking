@@ -19,6 +19,7 @@ import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.TestInstance
+import org.junit.jupiter.api.assertThrows
 
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 internal class ProcessingHandlerTest {
@@ -120,7 +121,7 @@ internal class ProcessingHandlerTest {
         fun `Adds all attributes from LogboekContext to span`() {
             // given
             val logboekContext = LogboekContext().apply {
-                processingActivityId = "activity-123"
+                processingActivityId = "https://register.example.org/activiteiten/activity-123"
                 dataSubjectId = "subject-456"
                 dataSubjectType = "BSN"
                 status = StatusCode.OK
@@ -130,31 +131,120 @@ internal class ProcessingHandlerTest {
             handler.addLogboekContextToSpan(mockSpan, logboekContext)
 
             // then
-            verify { mockSpan.setAttribute("dpl.core.processing_activity_id", "activity-123") }
+            verify { mockSpan.setAttribute("dpl.core.processing_activity_id", "https://register.example.org/activiteiten/activity-123") }
             verify { mockSpan.setAttribute("dpl.core.data_subject_id", "subject-456") }
             verify { mockSpan.setAttribute("dpl.core.data_subject_id_type", "BSN") }
             verify { mockSpan.setStatus(StatusCode.OK) }
         }
 
         @Test
-        fun `Handles null values in LogboekContext`() {
-            // given
-            val logboekContext = LogboekContext() // all values are null/default
+        fun `Throws when processingActivityId is null`() {
+            val logboekContext = LogboekContext().apply {
+                dataSubjectId = "subject-456"
+                dataSubjectType = "BSN"
+            }
 
-            // when
-            handler.addLogboekContextToSpan(mockSpan, logboekContext)
+            assertThrows<IllegalArgumentException> {
+                handler.addLogboekContextToSpan(mockSpan, logboekContext)
+            }
+        }
 
-            // then
-            verify { mockSpan.setAttribute("dpl.core.processing_activity_id", null as String?) }
-            verify { mockSpan.setAttribute("dpl.core.data_subject_id", null as String?) }
-            verify { mockSpan.setAttribute("dpl.core.data_subject_id_type", null as String?) }
-            verify { mockSpan.setStatus(StatusCode.UNSET) }
+        @Test
+        fun `Throws when processingActivityId is empty`() {
+            val logboekContext = LogboekContext().apply {
+                processingActivityId = ""
+                dataSubjectId = "subject-456"
+                dataSubjectType = "BSN"
+            }
+
+            assertThrows<IllegalArgumentException> {
+                handler.addLogboekContextToSpan(mockSpan, logboekContext)
+            }
+        }
+
+        @Test
+        fun `Throws when dataSubjectId is null`() {
+            val logboekContext = LogboekContext().apply {
+                processingActivityId = "https://register.example.org/activiteiten/activity-123"
+                dataSubjectType = "BSN"
+            }
+
+            assertThrows<IllegalArgumentException> {
+                handler.addLogboekContextToSpan(mockSpan, logboekContext)
+            }
+        }
+
+        @Test
+        fun `Throws when dataSubjectId is empty`() {
+            val logboekContext = LogboekContext().apply {
+                processingActivityId = "https://register.example.org/activiteiten/activity-123"
+                dataSubjectId = ""
+                dataSubjectType = "BSN"
+            }
+
+            assertThrows<IllegalArgumentException> {
+                handler.addLogboekContextToSpan(mockSpan, logboekContext)
+            }
+        }
+
+        @Test
+        fun `Throws when dataSubjectType is null`() {
+            val logboekContext = LogboekContext().apply {
+                processingActivityId = "https://register.example.org/activiteiten/activity-123"
+                dataSubjectId = "subject-456"
+            }
+
+            assertThrows<IllegalArgumentException> {
+                handler.addLogboekContextToSpan(mockSpan, logboekContext)
+            }
+        }
+
+        @Test
+        fun `Throws when dataSubjectType is empty`() {
+            val logboekContext = LogboekContext().apply {
+                processingActivityId = "https://register.example.org/activiteiten/activity-123"
+                dataSubjectId = "subject-456"
+                dataSubjectType = ""
+            }
+
+            assertThrows<IllegalArgumentException> {
+                handler.addLogboekContextToSpan(mockSpan, logboekContext)
+            }
+        }
+
+        @Test
+        fun `Throws when processingActivityId is not a valid URI`() {
+            val logboekContext = LogboekContext().apply {
+                processingActivityId = "not a valid uri {}"
+                dataSubjectId = "subject-456"
+                dataSubjectType = "BSN"
+            }
+
+            assertThrows<IllegalArgumentException> {
+                handler.addLogboekContextToSpan(mockSpan, logboekContext)
+            }
+        }
+
+        @Test
+        fun `Throws when processingActivityId is a relative URI`() {
+            val logboekContext = LogboekContext().apply {
+                processingActivityId = "/activiteiten/activity-123"
+                dataSubjectId = "subject-456"
+                dataSubjectType = "BSN"
+            }
+
+            assertThrows<IllegalArgumentException> {
+                handler.addLogboekContextToSpan(mockSpan, logboekContext)
+            }
         }
 
         @Test
         fun `Sets error status when LogboekContext has error status`() {
             // given
             val logboekContext = LogboekContext().apply {
+                processingActivityId = "https://register.example.org/activiteiten/activity-123"
+                dataSubjectId = "subject-456"
+                dataSubjectType = "BSN"
                 status = StatusCode.ERROR
             }
 
