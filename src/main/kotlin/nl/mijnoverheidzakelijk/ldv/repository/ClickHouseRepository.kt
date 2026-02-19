@@ -13,6 +13,7 @@ import java.util.concurrent.TimeUnit
  * Repository encapsulating basic ClickHouse operations used by the exporter.
  */
 class ClickHouseRepository {
+    private val table: String = ConfigurationLoader.clickhouseTable
     private val client: Client = Client.Builder()
         .addEndpoint(ConfigurationLoader.clickhouseEndpoint)
         .setUsername(ConfigurationLoader.clickhouseUsername)
@@ -20,15 +21,18 @@ class ClickHouseRepository {
         .setDefaultDatabase(ConfigurationLoader.clickhouseDatabase)
         .build()
 
+    init {
+        requireValidTableName(table)
+    }
+
     /**
      * Ensures that the target table exists with the expected schema.
-     * 
+     *
      * @throws ConfigurationException if the table name cannot be resolved
      * @throws RuntimeException       if the DDL operation fails
      */
     @Throws(ConfigurationException::class)
     fun ensureSchema() {
-        val table = ConfigurationLoader.clickhouseTable
         try {
             // Schema matching SpanData structure (camelCase)
             client.query(
@@ -54,18 +58,31 @@ class ClickHouseRepository {
     }
 
     /**
-     * Inserts a JSON payload into the specified table.
+     * Inserts a JSON payload into the configured table.
      *
-     * @param table              the target table name
      * @param jsonEachRowPayload payload where each line is a JSON object
      * @throws RuntimeException if the insert fails
      */
-    fun insertJsonEachRow(table: String, jsonEachRowPayload: String) {
+    fun insertJsonEachRow(jsonEachRowPayload: String) {
         try {
             val data: InputStream = ByteArrayInputStream(jsonEachRowPayload.toByteArray(StandardCharsets.UTF_8))
             client.insert(table, data, ClickHouseFormat.JSONEachRow).get()
         } catch (e: Exception) {
             throw RuntimeException("Failed to insert into ClickHouse", e)
+        }
+    }
+
+    fun close() {
+        client.close()
+    }
+
+    companion object {
+        private val TABLE_NAME_PATTERN = Regex("^[a-zA-Z_][a-zA-Z0-9_.]*$")
+
+        private fun requireValidTableName(table: String) {
+            require(TABLE_NAME_PATTERN.matches(table)) {
+                "Invalid table name: $table"
+            }
         }
     }
 }

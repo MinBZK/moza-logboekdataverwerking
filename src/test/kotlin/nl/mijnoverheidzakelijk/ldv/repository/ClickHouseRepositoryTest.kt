@@ -18,6 +18,8 @@ import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
+import org.junit.jupiter.params.ParameterizedTest
+import org.junit.jupiter.params.provider.ValueSource
 import java.io.InputStream
 import java.util.concurrent.CompletableFuture
 
@@ -106,18 +108,56 @@ internal class ClickHouseRepositoryTest {
     }
 
     @Nested
+    @DisplayName("requireValidTableName")
+    inner class RequireValidTableNameTests {
+
+        @Test
+        fun `Accepts valid simple table name and uses it in schema`() {
+            every { mockConfig.getValue("logboekdataverwerking.clickhouse.table", String::class.java) } returns "valid_table_123"
+            val mockFuture: CompletableFuture<QueryResponse> = CompletableFuture.completedFuture(mockk())
+            every { mockClient.query(any<String>()) } returns mockFuture
+
+            val repo = ClickHouseRepository()
+            repo.ensureSchema()
+
+            verify { mockClient.query(match { it.contains("CREATE TABLE IF NOT EXISTS valid_table_123") }) }
+        }
+
+        @Test
+        fun `Accepts schema-qualified table name and uses it in schema`() {
+            every { mockConfig.getValue("logboekdataverwerking.clickhouse.table", String::class.java) } returns "schema.table_name"
+            val mockFuture: CompletableFuture<QueryResponse> = CompletableFuture.completedFuture(mockk())
+            every { mockClient.query(any<String>()) } returns mockFuture
+
+            val repo = ClickHouseRepository()
+            repo.ensureSchema()
+
+            verify { mockClient.query(match { it.contains("CREATE TABLE IF NOT EXISTS schema.table_name") }) }
+        }
+
+        @ParameterizedTest(name = "Rejects invalid table name: \"{0}\"")
+        @ValueSource(strings = ["'; DROP TABLE spans; --", "123table", "my table", ""])
+        fun `Rejects invalid table names`(invalidName: String) {
+            every { mockConfig.getValue("logboekdataverwerking.clickhouse.table", String::class.java) } returns invalidName
+            assertThrows<IllegalArgumentException> {
+                ClickHouseRepository()
+            }
+        }
+    }
+
+    @Nested
     @DisplayName("insertJsonEachRow")
     inner class InsertJsonEachRowTests {
 
         @Test
-        fun `Inserts JSON payload into specified table`() {
+        fun `Inserts JSON payload into configured table`() {
             // given
             val jsonPayload = """{"traceId":"123","spanId":"456"}"""
             val mockFuture: CompletableFuture<InsertResponse> = CompletableFuture.completedFuture(mockk())
             every { mockClient.insert(any<String>(), any<InputStream>(), any<ClickHouseFormat>()) } returns mockFuture
 
             // when
-            repository.insertJsonEachRow("testtable", jsonPayload)
+            repository.insertJsonEachRow(jsonPayload)
 
             // then
             verify {
@@ -139,7 +179,7 @@ internal class ClickHouseRepositoryTest {
 
             // when / then
             val exception = assertThrows<RuntimeException> {
-                repository.insertJsonEachRow("testtable", jsonPayload)
+                repository.insertJsonEachRow(jsonPayload)
             }
             assert(exception.message == "Failed to insert into ClickHouse")
         }
@@ -152,7 +192,7 @@ internal class ClickHouseRepositoryTest {
             every { mockClient.insert(any<String>(), any<InputStream>(), any<ClickHouseFormat>()) } returns mockFuture
 
             // when
-            repository.insertJsonEachRow("testtable", jsonPayload)
+            repository.insertJsonEachRow(jsonPayload)
 
             // then - verify insert was called (data conversion happens internally)
             verify { mockClient.insert(any<String>(), any<InputStream>(), any<ClickHouseFormat>()) }

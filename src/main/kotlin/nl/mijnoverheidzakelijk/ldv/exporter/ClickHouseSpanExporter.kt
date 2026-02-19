@@ -4,7 +4,6 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import io.opentelemetry.sdk.common.CompletableResultCode
 import io.opentelemetry.sdk.trace.data.SpanData
 import io.opentelemetry.sdk.trace.export.SpanExporter
-import nl.mijnoverheidzakelijk.ldv.config.ConfigurationLoader
 import nl.mijnoverheidzakelijk.ldv.repository.ClickHouseRepository
 import java.util.concurrent.TimeUnit
 import java.util.logging.Level
@@ -20,7 +19,6 @@ import java.util.logging.Logger
  */
 class ClickHouseSpanExporter (
         private val repository: ClickHouseRepository = ClickHouseRepository(),
-        private val tableName: String = ConfigurationLoader.clickhouseTable,
         private val objectMapper: ObjectMapper = ObjectMapper()
     ) : SpanExporter {
 
@@ -51,7 +49,7 @@ class ClickHouseSpanExporter (
             }
 
             if (payload.isNotEmpty()) {
-                repository.insertJsonEachRow(tableName, payload.toString())
+                repository.insertJsonEachRow(payload.toString())
             }
         } catch (e: Exception) {
             LOGGER.log(Level.SEVERE, "Failed to insert spans into ClickHouse", e)
@@ -89,11 +87,19 @@ class ClickHouseSpanExporter (
     override fun flush(): CompletableResultCode = CompletableResultCode.ofSuccess()
 
     /**
-     * Shuts down the exporter. No resources to free, returns success.
-     * 
+     * Shuts down the exporter and closes the underlying ClickHouse client.
+     *
      * @return success result code
      */
-    override fun shutdown(): CompletableResultCode = CompletableResultCode.ofSuccess()
+    override fun shutdown(): CompletableResultCode {
+        return try {
+            repository.close()
+            CompletableResultCode.ofSuccess()
+        } catch (e: Exception) {
+            LOGGER.log(Level.SEVERE, "Failed to close ClickHouse client", e)
+            CompletableResultCode.ofFailure()
+        }
+    }
 
     companion object {
         private val LOGGER: Logger = Logger.getLogger(ClickHouseSpanExporter::class.java.getName())
