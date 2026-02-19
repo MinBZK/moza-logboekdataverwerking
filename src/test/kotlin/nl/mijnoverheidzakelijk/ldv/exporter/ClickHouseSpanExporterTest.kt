@@ -22,7 +22,6 @@ import java.io.IOException
 @ExtendWith(MockKExtension::class)
 internal class ClickHouseSpanExporterTest {
     private val mockRepository: ClickHouseRepository = mockk(relaxed = true)
-    private val tableName = "myTableName"
     private val mockObjectMapper: ObjectMapper = mockk(relaxed = true)
 
     @SpyK(recordPrivateCalls = true)
@@ -80,7 +79,7 @@ internal class ClickHouseSpanExporterTest {
         verify { clickhouseSpanExporter.export(mutableSetOf(mockTestSpan)) }
         verify { clickhouseSpanExporter["mapSpanToJson"](mockTestSpan) }
         verify { mockObjectMapper.writeValueAsString(any()) }
-        verify { mockRepository.insertJsonEachRow(tableName, "{\"traceId\":\"myTraceId\",\"spanId\":\"mySpanId\",\"status\":\"OK\",\"name\":\"myName\",\"startTime\":0,\"endTime\":0,\"parentSpanId\":\"myParentSpanId\",\"attributes\":{\"myAttributeKey1\":\"myAttributeValue1\",\"myAttributeKey2\":\"myAttributeValue2\"},\"resource\":{\"myResourceAttributeKey1\":\"myResourceAttributeValue1\",\"myResourceAttributeKey2\":\"myResourceAttributeValue2\"}}\n") }
+        verify { mockRepository.insertJsonEachRow("{\"traceId\":\"myTraceId\",\"spanId\":\"mySpanId\",\"status\":\"OK\",\"name\":\"myName\",\"startTime\":0,\"endTime\":0,\"parentSpanId\":\"myParentSpanId\",\"attributes\":{\"myAttributeKey1\":\"myAttributeValue1\",\"myAttributeKey2\":\"myAttributeValue2\"},\"resource\":{\"myResourceAttributeKey1\":\"myResourceAttributeValue1\",\"myResourceAttributeKey2\":\"myResourceAttributeValue2\"}}\n") }
         confirmVerified(mockObjectMapper, mockRepository, clickhouseSpanExporter)
         assert(CompletableResultCode.ofSuccess() == result)
     }
@@ -99,7 +98,7 @@ internal class ClickHouseSpanExporterTest {
 
         // then
         verify { clickhouseSpanExporter.export(mutableSetOf()) }
-        verify(inverse = true) { mockRepository.insertJsonEachRow(tableName, "{\"traceId\":\"myTraceId\",\"spanId\":\"mySpanId\",\"status\":\"OK\",\"name\":\"myName\",\"startTime\":0,\"endTime\":0,\"parentSpanId\":\"myParentSpanId\",\"attributes\":{\"myAttributeKey1\":\"myAttributeValue1\",\"myAttributeKey2\":\"myAttributeValue2\"},\"resource\":{\"myResourceAttributeKey1\":\"myResourceAttributeValue1\",\"myResourceAttributeKey2\":\"myResourceAttributeValue2\"}}\n") }
+        verify(inverse = true) { mockRepository.insertJsonEachRow("{\"traceId\":\"myTraceId\",\"spanId\":\"mySpanId\",\"status\":\"OK\",\"name\":\"myName\",\"startTime\":0,\"endTime\":0,\"parentSpanId\":\"myParentSpanId\",\"attributes\":{\"myAttributeKey1\":\"myAttributeValue1\",\"myAttributeKey2\":\"myAttributeValue2\"},\"resource\":{\"myResourceAttributeKey1\":\"myResourceAttributeValue1\",\"myResourceAttributeKey2\":\"myResourceAttributeValue2\"}}\n") }
         confirmVerified(mockObjectMapper, mockRepository, clickhouseSpanExporter)
         assert(CompletableResultCode.ofSuccess() == result)
     }
@@ -130,7 +129,7 @@ internal class ClickHouseSpanExporterTest {
             realMapper.writeValueAsString(arg<Any>(0))
         }
         val runtimeException = RuntimeException("Oops")
-        every { mockRepository.insertJsonEachRow(any(), any()) } throws runtimeException
+        every { mockRepository.insertJsonEachRow(any()) } throws runtimeException
 
         // when
         val result = clickhouseSpanExporter.export(mutableSetOf(mockTestSpan))
@@ -139,7 +138,7 @@ internal class ClickHouseSpanExporterTest {
         verify { clickhouseSpanExporter.export(mutableSetOf(mockTestSpan)) }
         verify { clickhouseSpanExporter["mapSpanToJson"](mockTestSpan) }
         verify { mockObjectMapper.writeValueAsString(any()) }
-        verify { mockRepository.insertJsonEachRow(tableName, "{\"traceId\":\"myTraceId\",\"spanId\":\"mySpanId\",\"status\":\"OK\",\"name\":\"myName\",\"startTime\":0,\"endTime\":0,\"parentSpanId\":\"myParentSpanId\",\"attributes\":{\"myAttributeKey1\":\"myAttributeValue1\",\"myAttributeKey2\":\"myAttributeValue2\"},\"resource\":{\"myResourceAttributeKey1\":\"myResourceAttributeValue1\",\"myResourceAttributeKey2\":\"myResourceAttributeValue2\"}}\n") }
+        verify { mockRepository.insertJsonEachRow("{\"traceId\":\"myTraceId\",\"spanId\":\"mySpanId\",\"status\":\"OK\",\"name\":\"myName\",\"startTime\":0,\"endTime\":0,\"parentSpanId\":\"myParentSpanId\",\"attributes\":{\"myAttributeKey1\":\"myAttributeValue1\",\"myAttributeKey2\":\"myAttributeValue2\"},\"resource\":{\"myResourceAttributeKey1\":\"myResourceAttributeValue1\",\"myResourceAttributeKey2\":\"myResourceAttributeValue2\"}}\n") }
         confirmVerified(mockObjectMapper, mockRepository, clickhouseSpanExporter)
         assert(CompletableResultCode.ofFailure() == result)
 

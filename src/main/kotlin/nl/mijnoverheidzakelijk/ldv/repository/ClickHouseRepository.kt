@@ -13,12 +13,17 @@ import java.util.concurrent.TimeUnit
  * Repository encapsulating basic ClickHouse operations used by the exporter.
  */
 class ClickHouseRepository {
+    private val table: String = ConfigurationLoader.clickhouseTable
     private val client: Client = Client.Builder()
         .addEndpoint(ConfigurationLoader.clickhouseEndpoint)
         .setUsername(ConfigurationLoader.clickhouseUsername)
         .setPassword(ConfigurationLoader.clickhousePassword)
         .setDefaultDatabase(ConfigurationLoader.clickhouseDatabase)
         .build()
+
+    init {
+        requireValidTableName(table)
+    }
 
     /**
      * Ensures that the target table exists with the expected schema.
@@ -28,8 +33,6 @@ class ClickHouseRepository {
      */
     @Throws(ConfigurationException::class)
     fun ensureSchema() {
-        val table = ConfigurationLoader.clickhouseTable
-        requireValidTableName(table)
         try {
             // Schema matching SpanData structure (camelCase)
             client.query(
@@ -55,14 +58,12 @@ class ClickHouseRepository {
     }
 
     /**
-     * Inserts a JSON payload into the specified table.
+     * Inserts a JSON payload into the configured table.
      *
-     * @param table              the target table name
      * @param jsonEachRowPayload payload where each line is a JSON object
      * @throws RuntimeException if the insert fails
      */
-    fun insertJsonEachRow(table: String, jsonEachRowPayload: String) {
-        requireValidTableName(table)
+    fun insertJsonEachRow(jsonEachRowPayload: String) {
         try {
             val data: InputStream = ByteArrayInputStream(jsonEachRowPayload.toByteArray(StandardCharsets.UTF_8))
             client.insert(table, data, ClickHouseFormat.JSONEachRow).get()
