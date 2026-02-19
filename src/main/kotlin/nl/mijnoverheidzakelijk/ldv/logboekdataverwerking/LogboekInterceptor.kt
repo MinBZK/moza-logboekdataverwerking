@@ -53,6 +53,7 @@ class LogboekInterceptor {
 
         val annotation = context.method.getAnnotation(Logboek::class.java)
         val name = annotation.name
+        require(name.isNotEmpty()) { "Span name is required by the LDV standard" }
         val processingActivityId = annotation.processingActivityId
 
         val span = handler.startSpan(name, traceContext)
@@ -68,10 +69,10 @@ class LogboekInterceptor {
             if (headers.getHeaderString("traceparent") != null) {
                 //todo hoe krijgen we de url, bijv. header. Hier is het team van LDV nog mee bezig.
                 //todo How do we get the url, ex. header. This is still being worked on by the LDV team.
-                span.setAttribute(
-                    "dpl.core.foreign_operation.processor",
-                    headers.getHeaderString("traceparent-processor")
-                )
+                val processor = headers.getHeaderString("traceparent-processor")
+                    ?: headers.getHeaderString("Origin")
+                    ?: "onbekend"
+                span.setAttribute("dpl.core.foreign_operation.processor", processor)
             }
 
             logboekContext.processingActivityId = processingActivityId

@@ -98,10 +98,17 @@ internal class LogboekInterceptorTest {
     private class AnnotatedMethods {
         @Logboek(name = "test-span", processingActivityId = "https://register.example.org/activiteiten/activity-123")
         fun testMethod() {}
+
+        @Logboek(processingActivityId = "https://register.example.org/activiteiten/activity-123")
+        fun emptyNameMethod() {}
     }
 
     private fun getAnnotatedMethod(): Method {
         return AnnotatedMethods::class.java.getDeclaredMethod("testMethod")
+    }
+
+    private fun getEmptyNameMethod(): Method {
+        return AnnotatedMethods::class.java.getDeclaredMethod("emptyNameMethod")
     }
 
     @Nested
@@ -167,6 +174,18 @@ internal class LogboekInterceptorTest {
         }
 
         @Test
+        fun `Throws when span name is empty`() {
+            // given
+            val mockMethod = getEmptyNameMethod()
+            every { mockInvocationContext.method } returns mockMethod
+
+            // when / then
+            assertThrows<IllegalArgumentException> {
+                interceptor.log(mockInvocationContext)
+            }
+        }
+
+        @Test
         fun `Returns null when method returns null`() {
             // given
             val mockMethod = getAnnotatedMethod()
@@ -199,6 +218,40 @@ internal class LogboekInterceptorTest {
 
             // then
             verify { mockSpan.setAttribute("dpl.core.foreign_operation.processor", "http://processor.example.com") }
+        }
+
+        @Test
+        fun `Falls back to Origin header when traceparent-processor absent`() {
+            // given
+            val mockMethod = getAnnotatedMethod()
+            every { mockInvocationContext.method } returns mockMethod
+            every { mockInvocationContext.proceed() } returns "result"
+            every { mockHeaders.getHeaderString("traceparent") } returns "00-trace-id-span-id-01"
+            every { mockHeaders.getHeaderString("traceparent-processor") } returns null
+            every { mockHeaders.getHeaderString("Origin") } returns "https://api.andere-organisatie.nl"
+
+            // when
+            interceptor.log(mockInvocationContext)
+
+            // then
+            verify { mockSpan.setAttribute("dpl.core.foreign_operation.processor", "https://api.andere-organisatie.nl") }
+        }
+
+        @Test
+        fun `Falls back to onbekend when both headers absent`() {
+            // given
+            val mockMethod = getAnnotatedMethod()
+            every { mockInvocationContext.method } returns mockMethod
+            every { mockInvocationContext.proceed() } returns "result"
+            every { mockHeaders.getHeaderString("traceparent") } returns "00-trace-id-span-id-01"
+            every { mockHeaders.getHeaderString("traceparent-processor") } returns null
+            every { mockHeaders.getHeaderString("Origin") } returns null
+
+            // when
+            interceptor.log(mockInvocationContext)
+
+            // then
+            verify { mockSpan.setAttribute("dpl.core.foreign_operation.processor", "onbekend") }
         }
 
         @Test
