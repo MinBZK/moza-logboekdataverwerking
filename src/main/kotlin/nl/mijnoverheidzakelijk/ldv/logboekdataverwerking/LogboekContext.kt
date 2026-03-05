@@ -1,0 +1,23 @@
+package nl.mijnoverheidzakelijk.ldv.logboekdataverwerking
+
+import io.opentelemetry.api.trace.StatusCode
+import jakarta.enterprise.context.RequestScoped
+
+/**
+ * Request-scoped holder for LogboekDataverwerking-related context data that will be attached to spans.
+ * This includes identifiers for the processing activity, data subject, and the span status.
+ */
+@RequestScoped
+class LogboekContext {
+    var processingActivityId: String? = null
+    /**
+     * Versleuteld of gepseudonimiseerd ID van de betrokkene.
+     * Mag NOOIT een onversleuteld BSN of direct identificerend gegeven bevatten.
+     * Zie de LDV standaard: https://logius-standaarden.github.io/logboek-dataverwerkingen/
+     */
+    var dataSubjectId: String? = null
+
+    var dataSubjectType: String? = null
+
+    var status: StatusCode = StatusCode.UNSET
+}
