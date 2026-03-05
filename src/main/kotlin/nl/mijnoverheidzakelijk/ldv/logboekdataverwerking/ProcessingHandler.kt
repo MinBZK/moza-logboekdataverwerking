@@ -10,7 +10,10 @@ import io.opentelemetry.sdk.OpenTelemetrySdk
 import io.opentelemetry.sdk.resources.Resource
 import io.opentelemetry.sdk.trace.SdkTracerProvider
 import io.opentelemetry.sdk.trace.export.BatchSpanProcessor
+import jakarta.annotation.PostConstruct
 import jakarta.enterprise.context.ApplicationScoped
+import jakarta.enterprise.inject.Instance
+import jakarta.inject.Inject
 import nl.mijnoverheidzakelijk.ldv.config.ConfigurationLoader
 import nl.mijnoverheidzakelijk.ldv.exporter.ClickHouseSpanExporter
 import nl.mijnoverheidzakelijk.ldv.exporter.DummySpanExporter
@@ -20,13 +23,34 @@ import java.util.logging.Logger
 /**
  * Handles creation and enrichment of OpenTelemetry spans used by the Logboek
  * interceptor flow.
+ *
+ * When running inside a CDI container that provides an [OpenTelemetry] bean
+ * (e.g. Quarkus with its OpenTelemetry extension), that instance is used
+ * directly. Otherwise, a standalone SDK instance is created and managed
+ * by this handler.
  */
 @ApplicationScoped
 class ProcessingHandler {
 
+    @Inject
+    private lateinit var openTelemetryInstance: Instance<OpenTelemetry>
+
+    private lateinit var openTelemetry: OpenTelemetry
+
+    @PostConstruct
+    fun init() {
+        openTelemetry = if (openTelemetryInstance.isResolvable) {
+            LOGGER.info("Using container-provided OpenTelemetry instance")
+            openTelemetryInstance.get()
+        } else {
+            LOGGER.info("No container-provided OpenTelemetry found, creating standalone instance")
+            initOpenTelemetry()
+        }
+    }
+
     /**
      * Starts a new span with the given name, optionally using an existing parent context.
-     * 
+     *
      * @param name    the span name
      * @param context the parent context may be null
      * @return the started span
@@ -45,7 +69,7 @@ class ProcessingHandler {
 
     /**
      * Adds Logboek context attributes and status to the given span.
-     * 
+     *
      * @param span           the span to enrich
      * @param logboekContext the context holding attributes
      */
@@ -74,29 +98,17 @@ class ProcessingHandler {
     companion object {
         private val LOGGER: Logger = Logger.getLogger(ProcessingHandler::class.java.name)
 
-        @Volatile
-        private var _openTelemetry: OpenTelemetry? = null
-
-        var openTelemetry: OpenTelemetry
-            get() = _openTelemetry ?: synchronized(this) {
-                _openTelemetry ?: initOpenTelemetry().also { _openTelemetry = it }
-            }
-            set(value) {
-                _openTelemetry = value
-            }
-
         val serviceName: String by lazy { ConfigurationLoader.serviceName }
 
         /**
-         * Initializes and returns the global [OpenTelemetry] instance.
-         * Uses double-checked locking for thread-safe lazy initialization.
+         * Creates a standalone [OpenTelemetry] instance for use outside a CDI container.
          *
          * @return the initialized [OpenTelemetry] instance
          * @throws ConfigurationException if exporter configuration cannot be read
          */
         @Throws(ConfigurationException::class)
-        private fun initOpenTelemetry(): OpenTelemetry {
-            LOGGER.info("Initializing OpenTelemetry for service: $serviceName")
+        internal fun initOpenTelemetry(): OpenTelemetry {
+            LOGGER.info("Initializing standalone OpenTelemetry for service: $serviceName")
 
             val resource = Resource.getDefault().merge(
                 Resource.create(

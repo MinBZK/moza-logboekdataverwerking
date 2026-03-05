@@ -10,6 +10,7 @@ import io.opentelemetry.api.trace.SpanBuilder
 import io.opentelemetry.api.trace.StatusCode
 import io.opentelemetry.api.trace.Tracer
 import io.opentelemetry.context.Context
+import jakarta.enterprise.inject.Instance
 import nl.mijnoverheidzakelijk.ldv.config.ConfigurationLoader
 import org.eclipse.microprofile.config.Config
 import org.junit.jupiter.api.AfterEach
@@ -36,14 +37,10 @@ internal class ProcessingHandlerTest {
         @JvmStatic
         @BeforeAll
         fun setUpClass() {
-            // Mock ConfigurationLoader BEFORE ProcessingHandler class is loaded
-            // (serviceName is still eagerly initialized, so config must be ready)
             mockConfig = mockk()
             every { mockConfig.getValue("logboekdataverwerking.service-name", String::class.java) } returns "test-service"
             every { mockConfig.getValue("logboekdataverwerking.enabled", Boolean::class.java) } returns false
             ConfigurationLoader.configProvider = { mockConfig }
-            // Note: With lazy initialization, we don't need to access openTelemetry here.
-            // Setting the mock in @BeforeEach prevents lazy init from running.
         }
     }
 
@@ -61,10 +58,17 @@ internal class ProcessingHandlerTest {
         every { mockSpanBuilder.startSpan() } returns mockSpan
         every { mockSpanBuilder.setParent(any<Context>()) } returns mockSpanBuilder
 
-        // Replace OpenTelemetry with mock
-        ProcessingHandler.openTelemetry = mockOpenTelemetry
+        // Mock CDI Instance to provide the mock OpenTelemetry
+        val mockInstance = mockk<Instance<OpenTelemetry>>()
+        every { mockInstance.isResolvable } returns true
+        every { mockInstance.get() } returns mockOpenTelemetry
 
+        // Create handler and inject mock via reflection
         handler = ProcessingHandler()
+        val field = ProcessingHandler::class.java.getDeclaredField("openTelemetryInstance")
+        field.isAccessible = true
+        field.set(handler, mockInstance)
+        handler.init()
     }
 
     @AfterEach
