@@ -9,7 +9,9 @@ import io.opentelemetry.context.Context
 import io.opentelemetry.sdk.OpenTelemetrySdk
 import io.opentelemetry.sdk.resources.Resource
 import io.opentelemetry.sdk.trace.SdkTracerProvider
+import io.opentelemetry.sdk.trace.SpanProcessor
 import io.opentelemetry.sdk.trace.export.BatchSpanProcessor
+import io.opentelemetry.sdk.trace.export.SimpleSpanProcessor
 import jakarta.annotation.PostConstruct
 import jakarta.enterprise.context.ApplicationScoped
 import jakarta.enterprise.inject.Instance
@@ -68,12 +70,20 @@ class ProcessingHandler {
     }
 
     /**
-     * Adds Logboek context attributes and status to the given span.
+     * Adds Logboek context attributes and (optionally) status to the given span.
+     *
+     * The [setStatus] parameter exists so callers can apply attributes without
+     * overwriting a status that has already been set elsewhere. The interceptor
+     * uses this to preserve an ERROR set on the exception path against a stale
+     * OK that user code may have written to [LogboekContext] before throwing.
      *
      * @param span           the span to enrich
      * @param logboekContext the context holding attributes
+     * @param setStatus      when true (default), applies [LogboekContext.status]
+     *                       to the span via [Span.setStatus]
      */
-    fun addLogboekContextToSpan(span: Span, logboekContext: LogboekContext) {
+    @JvmOverloads
+    fun addLogboekContextToSpan(span: Span, logboekContext: LogboekContext, setStatus: Boolean = true) {
         val processingActivityId = logboekContext.processingActivityId
         val dataSubjectId = logboekContext.dataSubjectId
         val dataSubjectType = logboekContext.dataSubjectType
@@ -92,7 +102,9 @@ class ProcessingHandler {
         span.setAttribute("dpl.core.processing_activity_id", processingActivityId)
         span.setAttribute("dpl.core.data_subject_id", dataSubjectId)
         span.setAttribute("dpl.core.data_subject_id_type", dataSubjectType)
-        span.setStatus(logboekContext.status)
+        if (setStatus) {
+            span.setStatus(logboekContext.status)
+        }
     }
 
     companion object {
@@ -110,23 +122,25 @@ class ProcessingHandler {
         internal fun initOpenTelemetry(): OpenTelemetry {
             LOGGER.info("Initializing standalone OpenTelemetry for service: $serviceName")
 
-            val resource = Resource.getDefault().merge(
-                Resource.create(
-                    Attributes.of(
-                        AttributeKey.stringKey("service.name"), serviceName
-                    )
-                )
-            )
+            val resource = Resource.getDefault().merge(Resource.create(buildResourceAttributes()))
 
-            val exporter =
-                if (ConfigurationLoader.enabled)
-                    ClickHouseSpanExporter()
-                else
-                    DummySpanExporter()
+            val exporter = if (ConfigurationLoader.enabled) {
+                // Fail-loud on startup if the ClickHouse exporter is requested but
+                // misconfigured, instead of silently dropping spans at first export.
+                ConfigurationLoader.validateClickhouseConfig()
+                ClickHouseSpanExporter()
+            } else {
+                DummySpanExporter()
+            }
+
+            val spanProcessor: SpanProcessor = when (ConfigurationLoader.spanProcessor) {
+                ConfigurationLoader.SpanProcessorMode.SIMPLE -> SimpleSpanProcessor.create(exporter)
+                ConfigurationLoader.SpanProcessorMode.BATCH -> BatchSpanProcessor.builder(exporter).build()
+            }
 
             val tracerProvider = SdkTracerProvider.builder()
                 .setResource(resource)
-                .addSpanProcessor(BatchSpanProcessor.builder(exporter).build())
+                .addSpanProcessor(spanProcessor)
                 .build()
 
             val openTelemetrySdk = OpenTelemetrySdk.builder()
@@ -136,6 +150,18 @@ class ProcessingHandler {
             Runtime.getRuntime().addShutdownHook(Thread { openTelemetrySdk.close() })
 
             return openTelemetrySdk
+        }
+
+        private fun buildResourceAttributes(): Attributes {
+            val builder = Attributes.builder()
+            builder.put(AttributeKey.stringKey("service.name"), serviceName)
+            ConfigurationLoader.serviceVersion?.let {
+                builder.put(AttributeKey.stringKey("service.version"), it)
+            }
+            ConfigurationLoader.deploymentEnvironment?.let {
+                builder.put(AttributeKey.stringKey("deployment.environment"), it)
+            }
+            return builder.build()
         }
     }
 }

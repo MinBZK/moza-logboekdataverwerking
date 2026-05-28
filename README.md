@@ -30,6 +30,16 @@ logboekdataverwerking.clickhouse.username=user
 logboekdataverwerking.clickhouse.password=password
 logboekdataverwerking.clickhouse.database=db_name
 logboekdataverwerking.clickhouse.table=table_name
+
+# Optionele OpenTelemetry resource-attributen
+# Worden alleen toegevoegd aan de standalone OpenTelemetry resource;
+# in een Quarkus-container met quarkus-opentelemetry komen deze uit de Quarkus-config.
+logboekdataverwerking.service-version=1.0.0
+logboekdataverwerking.deployment-environment=production
+
+# Span processor: 'batch' (standaard) of 'simple'.
+# Zie 'Span processor en acknowledgement' hieronder voor de trade-off.
+logboekdataverwerking.span-processor=batch
 ```
 
 of `application.yml`:
@@ -38,6 +48,9 @@ of `application.yml`:
 logboekdataverwerking:
     enabled: true
     service-name: service-name
+    service-version: 1.0.0
+    deployment-environment: production
+    span-processor: batch
     clickhouse:
         endpoint: http://localhost:8123
         username: user
@@ -45,6 +58,8 @@ logboekdataverwerking:
         database: db_name
         table: table_name
 ```
+
+Als `enabled=true` is, valideert de library bij applicatiestart dat alle `clickhouse.*` properties aanwezig en niet-leeg zijn. Ontbrekende of lege waarden geven een `IllegalStateException` met een lijst van de missende keys, in plaats van pas bij de eerste export te falen.
 
 Hierna kun je endpoints voorzien van de `@Logboek()` annotatie:
 
@@ -122,3 +137,48 @@ logboekdataverwerking.enabled=false
 ```
 
 Wanneer uitgeschakeld, worden er geen verbindingen met de database gemaakt.
+
+### Cross-organisatie trace context (W3C Trace Context)
+
+De `LogboekInterceptor` extraheert automatisch inkomende `traceparent`/`tracestate` headers, zodat een verwerking die door een andere organisatie is gestart in het eigen Logboek wordt voortgezet onder hetzelfde `trace_id`.
+
+Voor de andere richting (uitgaande calls vanuit deze service naar een andere organisatie) registreer je `LogboekClientRequestFilter` op je JAX-RS / MicroProfile REST clients. De filter injecteert `traceparent` op elke uitgaande request op basis van de actieve OpenTelemetry-context:
+
+**Kotlin:**
+```kotlin
+import nl.mijnoverheidzakelijk.ldv.client.LogboekClientRequestFilter
+import org.eclipse.microprofile.rest.client.annotation.RegisterProvider
+import org.eclipse.microprofile.rest.client.inject.RegisterRestClient
+
+@Path("/api")
+@RegisterRestClient(configKey = "andere-organisatie")
+@RegisterProvider(LogboekClientRequestFilter::class)
+interface AndereOrganisatieClient { /* ... */ }
+```
+
+**Java:**
+```java
+@Path("/api")
+@RegisterRestClient(configKey = "andere-organisatie")
+@RegisterProvider(LogboekClientRequestFilter.class)
+public interface AndereOrganisatieClient { /* ... */ }
+```
+
+Of programmatisch:
+
+```kotlin
+val client = ClientBuilder.newClient().register(LogboekClientRequestFilter::class.java)
+```
+
+#### dpl.core.foreign_operation.processor
+
+Het LDV-attribuut `dpl.core.foreign_operation.processor` identificeert de andere partij in een cross-organisatie verwerking en hoort gezet te worden op de **uitgaande** kant: door applicatiecode op de actieve span, met de URL of identifier van de externe service. De interceptor zet dit attribuut niet automatisch; alleen de tracecontext wordt voor je gepropageerd.
+
+### Span processor en acknowledgement
+
+De LDV-standaard stelt dat de applicatie moet kunnen weten dat een logregel daadwerkelijk is opgeslagen. Met OpenTelemetry zijn er twee gangbare processors:
+
+- **`batch`** (standaard): `BatchSpanProcessor`. Spans worden asynchroon in batches geëxporteerd. Hoogste throughput, laagste request-latency, maar de applicatie keert terug naar de aanroeper voordat de export bevestigd is. Bij een JVM-crash tussen response en flush kan een logregel verloren gaan.
+- **`simple`**: `SimpleSpanProcessor`. Elke span wordt synchroon geëxporteerd; de applicatie wacht op de bevestiging van ClickHouse voordat de request afrondt. Strikter conform de spec, maar verhoogt p99-latency en koppelt request-doorlooptijd aan de beschikbaarheid van het Logboek.
+
+Kies bewust per omgeving. Voor een initiële implementatie volstaat `batch`; overweeg `simple` zodra het Logboek productiekritisch en hoog-beschikbaar is.

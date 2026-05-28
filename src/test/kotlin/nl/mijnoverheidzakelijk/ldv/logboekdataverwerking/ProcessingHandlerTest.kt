@@ -258,5 +258,26 @@ internal class ProcessingHandlerTest {
             // then
             verify { mockSpan.setStatus(StatusCode.ERROR) }
         }
+
+        @Test
+        fun `setStatus=false applies attributes but does not touch span status`() {
+            // given
+            val logboekContext = LogboekContext().apply {
+                processingActivityId = "https://register.example.org/activiteiten/activity-123"
+                dataSubjectId = "subject-456"
+                dataSubjectType = "BSN"
+                status = StatusCode.OK
+            }
+
+            // when
+            handler.addLogboekContextToSpan(mockSpan, logboekContext, setStatus = false)
+
+            // then
+            verify { mockSpan.setAttribute("dpl.core.processing_activity_id", "https://register.example.org/activiteiten/activity-123") }
+            verify { mockSpan.setAttribute("dpl.core.data_subject_id", "subject-456") }
+            verify { mockSpan.setAttribute("dpl.core.data_subject_id_type", "BSN") }
+            verify(inverse = true) { mockSpan.setStatus(any<StatusCode>()) }
+            verify(inverse = true) { mockSpan.setStatus(any<StatusCode>(), any<String>()) }
+        }
     }
 }

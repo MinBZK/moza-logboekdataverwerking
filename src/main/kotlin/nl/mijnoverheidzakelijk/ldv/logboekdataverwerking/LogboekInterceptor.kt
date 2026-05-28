@@ -14,8 +14,8 @@ import jakarta.ws.rs.core.HttpHeaders
 /**
  * CDI interceptor that surrounds methods annotated with [Logboek] and creates
  * an OpenTelemetry span.
- * 
- * 
+ *
+ *
  * It extracts an existing trace context from inbound HTTP headers
  * (if present) using the W3C Trace Context format and enriches the span with Logboek
  * attributes before ending it.
@@ -35,8 +35,10 @@ class LogboekInterceptor {
     /**
      * Starts a span, proceeds with the intercepted invocation, and finalizes the span
      * with any Logboek context attributes. If an exception occurs, the span status is
-     * marked with StatusCode error and the exception is rethrown.
-     * 
+     * marked with StatusCode error and the exception is rethrown. The exception path
+     * sets ERROR directly on the span and prevents the finally-block from overwriting
+     * it via the (possibly stale) status field on [LogboekContext].
+     *
      * @param context the invocation context
      * @return the result of the intercepted method
      * @throws Exception propagated from the intercepted method
@@ -56,26 +58,23 @@ class LogboekInterceptor {
         val processingActivityId = annotation.processingActivityId
 
         val span = handler.startSpan(name, traceContext)
+        var caughtException = false
 
         try {
             span.makeCurrent().use { _ ->
                 return context.proceed()
             }
         } catch (e: Exception) {
-            span.setStatus(StatusCode.ERROR)
+            caughtException = true
+            span.setStatus(StatusCode.ERROR, e.message ?: "")
             throw e
         } finally {
-            if (headers.getHeaderString("traceparent") != null) {
-                //todo hoe krijgen we de url, bijv. header. Hier is het team van LDV nog mee bezig.
-                //todo How do we get the url, ex. header. This is still being worked on by the LDV team.
-                span.setAttribute(
-                    "dpl.core.foreign_operation.processor",
-                    headers.getHeaderString("traceparent-processor")
-                )
-            }
-
             logboekContext.processingActivityId = processingActivityId
-            handler.addLogboekContextToSpan(span, logboekContext)
+            // When an exception was caught, ERROR was already set on the span. Do NOT
+            // let the caller-supplied status (e.g. an optimistic OK set before the
+            // exception was thrown) overwrite it via setStatus. OTel's transition rules
+            // would otherwise lock the span at OK and silently drop the ERROR.
+            handler.addLogboekContextToSpan(span, logboekContext, setStatus = !caughtException)
             span.end()
         }
     }
