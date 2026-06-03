@@ -70,10 +70,8 @@ class LogboekInterceptor {
             throw e
         } finally {
             logboekContext.processingActivityId = processingActivityId
-            // When an exception was caught, ERROR was already set on the span. Do NOT
-            // let the caller-supplied status (e.g. an optimistic OK set before the
-            // exception was thrown) overwrite it via setStatus. OTel's transition rules
-            // would otherwise lock the span at OK and silently drop the ERROR.
+            // On the exception path ERROR is already set; skip re-applying status. An
+            // optimistic OK would override it (OTel precedence: Ok > Error) and drop the error.
             handler.addLogboekContextToSpan(span, logboekContext, setStatus = !caughtException)
             span.end()
         }

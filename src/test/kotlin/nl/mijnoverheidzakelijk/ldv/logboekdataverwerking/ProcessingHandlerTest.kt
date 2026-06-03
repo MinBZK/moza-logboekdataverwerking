@@ -12,6 +12,7 @@ import io.opentelemetry.api.trace.Tracer
 import io.opentelemetry.context.Context
 import jakarta.enterprise.inject.Instance
 import nl.mijnoverheidzakelijk.ldv.config.ConfigurationLoader
+import nl.mijnoverheidzakelijk.ldv.exporter.LdvSpanFilterProcessor
 import org.eclipse.microprofile.config.Config
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeAll
@@ -108,12 +109,12 @@ internal class ProcessingHandlerTest {
         }
 
         @Test
-        fun `StartSpan uses correct service name for tracer`() {
+        fun `StartSpan uses the dedicated LDV instrumentation scope for tracer`() {
             // when
             handler.startSpan("any-span", null)
 
             // then
-            verify { mockOpenTelemetry.getTracer(ProcessingHandler.serviceName) }
+            verify { mockOpenTelemetry.getTracer(LdvSpanFilterProcessor.LDV_INSTRUMENTATION_SCOPE) }
         }
     }
 
