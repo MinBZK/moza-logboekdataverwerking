@@ -25,7 +25,9 @@ import io.opentelemetry.sdk.trace.SpanProcessor
 class LdvSpanFilterProcessor(private val delegate: SpanProcessor) : SpanProcessor {
 
     override fun onStart(parentContext: Context, span: ReadWriteSpan) {
-        delegate.onStart(parentContext, span)
+        if (span.instrumentationScopeInfo.name == LDV_INSTRUMENTATION_SCOPE) {
+            delegate.onStart(parentContext, span)
+        }
     }
 
     override fun isStartRequired(): Boolean = delegate.isStartRequired()

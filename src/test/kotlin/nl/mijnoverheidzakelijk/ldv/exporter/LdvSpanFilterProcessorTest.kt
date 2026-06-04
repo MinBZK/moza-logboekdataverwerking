@@ -3,8 +3,10 @@ package nl.mijnoverheidzakelijk.ldv.exporter
 import io.mockk.mockk
 import io.mockk.every
 import io.mockk.verify
+import io.opentelemetry.context.Context
 import io.opentelemetry.sdk.common.CompletableResultCode
 import io.opentelemetry.sdk.common.InstrumentationScopeInfo
+import io.opentelemetry.sdk.trace.ReadWriteSpan
 import io.opentelemetry.sdk.trace.ReadableSpan
 import io.opentelemetry.sdk.trace.SdkTracerProvider
 import io.opentelemetry.sdk.trace.SpanProcessor
@@ -40,6 +42,32 @@ internal class LdvSpanFilterProcessorTest {
         processor.onEnd(span)
 
         verify(exactly = 0) { delegate.onEnd(any()) }
+    }
+
+    @Test
+    fun `forwards onStart for LDV-scope spans`() {
+        val delegate = mockk<SpanProcessor>(relaxed = true)
+        val processor = LdvSpanFilterProcessor(delegate)
+        val span = mockk<ReadWriteSpan>()
+        every { span.instrumentationScopeInfo } returns
+            InstrumentationScopeInfo.create(LdvSpanFilterProcessor.LDV_INSTRUMENTATION_SCOPE)
+
+        processor.onStart(Context.root(), span)
+
+        verify { delegate.onStart(any(), span) }
+    }
+
+    @Test
+    fun `drops onStart for other instrumentation scopes`() {
+        val delegate = mockk<SpanProcessor>(relaxed = true)
+        val processor = LdvSpanFilterProcessor(delegate)
+        val span = mockk<ReadWriteSpan>()
+        every { span.instrumentationScopeInfo } returns
+            InstrumentationScopeInfo.create("io.opentelemetry.jdbc")
+
+        processor.onStart(Context.root(), span)
+
+        verify(exactly = 0) { delegate.onStart(any(), any()) }
     }
 
     /**
