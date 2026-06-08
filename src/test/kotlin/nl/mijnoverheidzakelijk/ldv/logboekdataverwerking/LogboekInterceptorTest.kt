@@ -122,7 +122,7 @@ internal class LogboekInterceptorTest {
             verify { mockHandler.startSpan("test-span", any()) }
             verify { mockSpan.makeCurrent() }
             verify { mockInvocationContext.proceed() }
-            verify { mockHandler.addLogboekContextToSpan(mockSpan, mockLogboekContext) }
+            verify { mockHandler.addLogboekContextToSpan(mockSpan, mockLogboekContext, true) }
             verify { mockSpan.end() }
             assert(result == "result")
             assert(mockLogboekContext.processingActivityId == "https://register.example.org/activiteiten/activity-123")
@@ -142,9 +142,42 @@ internal class LogboekInterceptorTest {
             }
 
             assert(thrown == testException)
-            verify { mockSpan.setStatus(StatusCode.ERROR) }
-            verify { mockHandler.addLogboekContextToSpan(mockSpan, mockLogboekContext) }
+            verify { mockSpan.setStatus(StatusCode.ERROR, "Test exception") }
+            // setStatus = false: the interceptor must not let addLogboekContextToSpan
+            // re-apply status from LogboekContext on the exception path, otherwise an
+            // optimistic OK written by user code before the throw would mask the ERROR.
+            verify { mockHandler.addLogboekContextToSpan(mockSpan, mockLogboekContext, false) }
             verify { mockSpan.end() }
+        }
+
+        @Test
+        fun `Exception preserves ERROR even when LogboekContext status was set to OK`() {
+            // given
+            val mockMethod = getAnnotatedMethod()
+            mockLogboekContext.status = StatusCode.OK
+            every { mockInvocationContext.method } returns mockMethod
+            every { mockInvocationContext.proceed() } throws RuntimeException("kaboom")
+
+            // when / then
+            assertThrows<RuntimeException> { interceptor.log(mockInvocationContext) }
+
+            verify { mockSpan.setStatus(StatusCode.ERROR, "kaboom") }
+            verify { mockHandler.addLogboekContextToSpan(mockSpan, mockLogboekContext, false) }
+            // setStatus(OK) from addLogboekContextToSpan would otherwise be locked-in by OTel
+            // and prevent the ERROR set in the catch from sticking.
+        }
+
+        @Test
+        fun `Exception with null message uses empty description`() {
+            // given
+            val mockMethod = getAnnotatedMethod()
+            every { mockInvocationContext.method } returns mockMethod
+            every { mockInvocationContext.proceed() } throws RuntimeException()
+
+            // when / then
+            assertThrows<RuntimeException> { interceptor.log(mockInvocationContext) }
+
+            verify { mockSpan.setStatus(StatusCode.ERROR, "") }
         }
 
         @Test
@@ -182,11 +215,17 @@ internal class LogboekInterceptorTest {
     }
 
     @Nested
-    @DisplayName("Trace context propagation")
-    inner class TraceContextPropagationTests {
+    @DisplayName("foreign_operation.processor handling")
+    inner class ForeignOperationProcessorTests {
+
+        // The earlier inbound-side handling of dpl.core.foreign_operation.processor was
+        // semantically inverted (the spec defines it for the outbound side) and pulled
+        // its URL from a non-standard `traceparent-processor` header. The interceptor
+        // no longer sets the attribute; application code is responsible for setting it
+        // on the outbound side when calling another organisatie.
 
         @Test
-        fun `sets foreign operation attributes when traceparent header present`() {
+        fun `Does not set foreign_operation processor even when traceparent header is present`() {
             // given
             val mockMethod = getAnnotatedMethod()
             every { mockInvocationContext.method } returns mockMethod
@@ -198,11 +237,11 @@ internal class LogboekInterceptorTest {
             interceptor.log(mockInvocationContext)
 
             // then
-            verify { mockSpan.setAttribute("dpl.core.foreign_operation.processor", "http://processor.example.com") }
+            verify(inverse = true) { mockSpan.setAttribute("dpl.core.foreign_operation.processor", any<String>()) }
         }
 
         @Test
-        fun `Does not set foreign operation attributes when traceparent header absent`() {
+        fun `Does not set foreign_operation processor when traceparent header absent`() {
             // given
             val mockMethod = getAnnotatedMethod()
             every { mockInvocationContext.method } returns mockMethod

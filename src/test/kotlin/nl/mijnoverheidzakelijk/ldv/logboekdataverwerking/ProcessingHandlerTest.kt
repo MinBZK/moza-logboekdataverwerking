@@ -12,6 +12,7 @@ import io.opentelemetry.api.trace.Tracer
 import io.opentelemetry.context.Context
 import jakarta.enterprise.inject.Instance
 import nl.mijnoverheidzakelijk.ldv.config.ConfigurationLoader
+import nl.mijnoverheidzakelijk.ldv.exporter.LdvSpanFilterProcessor
 import org.eclipse.microprofile.config.Config
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeAll
@@ -108,12 +109,12 @@ internal class ProcessingHandlerTest {
         }
 
         @Test
-        fun `StartSpan uses correct service name for tracer`() {
+        fun `StartSpan uses the dedicated LDV instrumentation scope for tracer`() {
             // when
             handler.startSpan("any-span", null)
 
             // then
-            verify { mockOpenTelemetry.getTracer(ProcessingHandler.serviceName) }
+            verify { mockOpenTelemetry.getTracer(LdvSpanFilterProcessor.LDV_INSTRUMENTATION_SCOPE) }
         }
     }
 
@@ -257,6 +258,27 @@ internal class ProcessingHandlerTest {
 
             // then
             verify { mockSpan.setStatus(StatusCode.ERROR) }
+        }
+
+        @Test
+        fun `setStatus=false applies attributes but does not touch span status`() {
+            // given
+            val logboekContext = LogboekContext().apply {
+                processingActivityId = "https://register.example.org/activiteiten/activity-123"
+                dataSubjectId = "subject-456"
+                dataSubjectType = "BSN"
+                status = StatusCode.OK
+            }
+
+            // when
+            handler.addLogboekContextToSpan(mockSpan, logboekContext, setStatus = false)
+
+            // then
+            verify { mockSpan.setAttribute("dpl.core.processing_activity_id", "https://register.example.org/activiteiten/activity-123") }
+            verify { mockSpan.setAttribute("dpl.core.data_subject_id", "subject-456") }
+            verify { mockSpan.setAttribute("dpl.core.data_subject_id_type", "BSN") }
+            verify(inverse = true) { mockSpan.setStatus(any<StatusCode>()) }
+            verify(inverse = true) { mockSpan.setStatus(any<StatusCode>(), any<String>()) }
         }
     }
 }
