@@ -55,6 +55,7 @@ class LogboekInterceptor {
 
         val annotation = context.method.getAnnotation(Logboek::class.java)
         val name = annotation.name
+        require(name.isNotEmpty()) { "Span name is required by the LDV standard" }
         val processingActivityId = annotation.processingActivityId
 
         val span = handler.startSpan(name, traceContext)
