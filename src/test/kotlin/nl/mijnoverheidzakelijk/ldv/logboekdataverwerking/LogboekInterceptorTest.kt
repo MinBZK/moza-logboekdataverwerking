@@ -98,10 +98,17 @@ internal class LogboekInterceptorTest {
     private class AnnotatedMethods {
         @Logboek(name = "test-span", processingActivityId = "https://register.example.org/activiteiten/activity-123")
         fun testMethod() {}
+
+        @Logboek(processingActivityId = "https://register.example.org/activiteiten/activity-123")
+        fun emptyNameMethod() {}
     }
 
     private fun getAnnotatedMethod(): Method {
         return AnnotatedMethods::class.java.getDeclaredMethod("testMethod")
+    }
+
+    private fun getEmptyNameMethod(): Method {
+        return AnnotatedMethods::class.java.getDeclaredMethod("emptyNameMethod")
     }
 
     @Nested
@@ -126,6 +133,18 @@ internal class LogboekInterceptorTest {
             verify { mockSpan.end() }
             assert(result == "result")
             assert(mockLogboekContext.processingActivityId == "https://register.example.org/activiteiten/activity-123")
+        }
+
+        @Test
+        fun `Throws when span name is empty`() {
+            // given
+            val mockMethod = getEmptyNameMethod()
+            every { mockInvocationContext.method } returns mockMethod
+
+            // when / then
+            assertThrows<IllegalArgumentException> {
+                interceptor.log(mockInvocationContext)
+            }
         }
 
         @Test
