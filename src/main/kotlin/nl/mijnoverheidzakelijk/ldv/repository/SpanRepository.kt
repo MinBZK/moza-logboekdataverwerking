@@ -11,6 +11,13 @@ import nl.mijnoverheidzakelijk.ldv.exporter.SpanRow
  * [nl.mijnoverheidzakelijk.ldv.exporter.SpanMapper], so the span→[SpanRow]
  * mapping lives in exactly one place and adding a new backend means writing one
  * implementation of this interface — not a second exporter with its own mapping.
+ *
+ * Lifecycle: [ensureSchema] is called once before any [insert]; [close] ends use.
+ * Implementations MUST be safe for [insert] calls from arbitrary threads, because
+ * the [io.opentelemetry.sdk.trace.export.SimpleSpanProcessor] path exports on
+ * application request threads. An implementation backed by a thread-safe client
+ * (e.g. [ClickHouseRepository]) needs no extra locking; one holding non-thread-safe
+ * state (e.g. [PostgresRepository]'s JDBC connection) must serialize access itself.
  */
 interface SpanRepository {
 

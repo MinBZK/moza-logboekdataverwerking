@@ -6,7 +6,6 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import io.opentelemetry.api.trace.SpanId
 import nl.mijnoverheidzakelijk.ldv.config.ConfigurationLoader
 import nl.mijnoverheidzakelijk.ldv.exporter.SpanRow
-import org.apache.commons.configuration2.ex.ConfigurationException
 import java.io.ByteArrayInputStream
 import java.io.InputStream
 import java.nio.charset.StandardCharsets
@@ -14,9 +13,17 @@ import java.util.concurrent.TimeUnit
 
 /**
  * Repository encapsulating basic ClickHouse operations used by the exporter.
+ *
+ * Implements [SpanRepository]; the span `attributes`/`resource` maps are stored
+ * as `Map(String, String)` columns and a root span's `parentSpanId` is rendered
+ * as the all-zero invalid id (see [insert]). The ClickHouse [Client] is
+ * internally thread-safe, so — unlike [PostgresRepository] — no external
+ * synchronization is needed for the `SimpleSpanProcessor` path that can call
+ * [insert] from arbitrary application threads.
  */
 class ClickHouseRepository(
     private val objectMapper: ObjectMapper = ObjectMapper(),
+    private val queryTimeoutSeconds: Int = ConfigurationLoader.clickhouseQueryTimeoutSeconds,
 ) : SpanRepository {
     private val table: String = ConfigurationLoader.clickhouseTable
     private val client: Client = Client.Builder()
@@ -27,19 +34,20 @@ class ClickHouseRepository(
         .build()
 
     init {
-        requireValidTableName(table)
+        TableNames.requireValid(table)
+        require(queryTimeoutSeconds >= 0) {
+            "queryTimeoutSeconds must be >= 0, was $queryTimeoutSeconds"
+        }
     }
 
     /**
      * Ensures that the target table exists with the expected schema.
      *
-     * @throws ConfigurationException if the table name cannot be resolved
-     * @throws RuntimeException       if the DDL operation fails
+     * @throws RuntimeException if the DDL operation fails or times out
      */
-    @Throws(ConfigurationException::class)
     override fun ensureSchema() {
         try {
-            // Schema matching SpanData structure (camelCase)
+            // Columns match the JSONEachRow keys produced by toJsonMap (camelCase).
             client.query(
                 """
                 CREATE TABLE IF NOT EXISTS $table (
@@ -56,7 +64,7 @@ class ClickHouseRepository(
                 ENGINE = MergeTree()
                 ORDER BY (traceId, spanId);
                 """.trimIndent()
-            ).get(30, TimeUnit.SECONDS)
+            ).get(queryTimeoutSeconds.toLong(), TimeUnit.SECONDS)
         } catch (e: Exception) {
             throw RuntimeException("Failed to ensure ClickHouse schema", e)
         }
@@ -89,8 +97,8 @@ class ClickHouseRepository(
         "spanId" to row.spanId,
         "status" to row.status.name,
         "name" to row.name,
-        "startTime" to row.startTime,
-        "endTime" to row.endTime,
+        "startTime" to row.startTimeMillis,
+        "endTime" to row.endTimeMillis,
         "parentSpanId" to (row.parentSpanId ?: SpanId.getInvalid()),
         "attributes" to row.attributes,
         "resource" to row.resource,
@@ -100,12 +108,12 @@ class ClickHouseRepository(
      * Inserts a JSON payload into the configured table.
      *
      * @param jsonEachRowPayload payload where each line is a JSON object
-     * @throws RuntimeException if the insert fails
+     * @throws RuntimeException if the insert fails or times out
      */
     fun insertJsonEachRow(jsonEachRowPayload: String) {
         try {
             val data: InputStream = ByteArrayInputStream(jsonEachRowPayload.toByteArray(StandardCharsets.UTF_8))
-            client.insert(table, data, ClickHouseFormat.JSONEachRow).get()
+            client.insert(table, data, ClickHouseFormat.JSONEachRow).get(queryTimeoutSeconds.toLong(), TimeUnit.SECONDS)
         } catch (e: Exception) {
             throw RuntimeException("Failed to insert into ClickHouse", e)
         }
@@ -113,15 +121,5 @@ class ClickHouseRepository(
 
     override fun close() {
         client.close()
-    }
-
-    companion object {
-        private val TABLE_NAME_PATTERN = Regex("^[a-zA-Z_][a-zA-Z0-9_.]*$")
-
-        private fun requireValidTableName(table: String) {
-            require(TABLE_NAME_PATTERN.matches(table)) {
-                "Invalid table name: $table"
-            }
-        }
     }
 }

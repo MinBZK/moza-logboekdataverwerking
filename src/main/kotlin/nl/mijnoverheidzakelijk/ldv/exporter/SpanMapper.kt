@@ -30,8 +30,8 @@ object SpanMapper {
             spanId = span.spanId,
             status = span.status.statusCode,
             name = span.name,
-            startTime = TimeUnit.NANOSECONDS.toMillis(span.startEpochNanos),
-            endTime = TimeUnit.NANOSECONDS.toMillis(span.endEpochNanos),
+            startTimeMillis = TimeUnit.NANOSECONDS.toMillis(span.startEpochNanos),
+            endTimeMillis = TimeUnit.NANOSECONDS.toMillis(span.endEpochNanos),
             parentSpanId = if (span.parentSpanContext.isValid) span.parentSpanId else null,
             attributes = span.attributes.asMap().entries.associate { it.key.key to it.value.toString() },
             resource = span.resource.attributes.asMap().entries.associate { it.key.key to it.value.toString() }

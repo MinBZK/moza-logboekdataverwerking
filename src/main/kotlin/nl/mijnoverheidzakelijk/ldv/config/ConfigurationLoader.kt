@@ -20,6 +20,9 @@ object ConfigurationLoader {
     /** Default for [postgresqlConnectionValidationTimeoutSeconds] when unset. */
     const val DEFAULT_POSTGRESQL_CONNECTION_VALIDATION_TIMEOUT_SECONDS: Int = 5
 
+    /** Default for [clickhouseQueryTimeoutSeconds] when unset. */
+    const val DEFAULT_CLICKHOUSE_QUERY_TIMEOUT_SECONDS: Int = 30
+
     /**
      * Provider for the MicroProfile [Config] instance.
      * Can be replaced in tests to provide mock configuration.
@@ -109,6 +112,20 @@ object ConfigurationLoader {
     /** The ClickHouse table name for storing spans. */
     val clickhouseTable: String
         get() = getValue("logboekdataverwerking.clickhouse.table", String::class.java)
+
+    /**
+     * Timeout in seconds for blocking ClickHouse operations (schema DDL and
+     * inserts). Bounds the wait so a stalled server surfaces as a failed export
+     * instead of wedging the calling thread. Optional; defaults to
+     * [DEFAULT_CLICKHOUSE_QUERY_TIMEOUT_SECONDS] when unset.
+     */
+    val clickhouseQueryTimeoutSeconds: Int
+        get() {
+            val key = "logboekdataverwerking.clickhouse.query-timeout-seconds"
+            val raw = getOptionalString(key) ?: return DEFAULT_CLICKHOUSE_QUERY_TIMEOUT_SECONDS
+            return raw.toIntOrNull()
+                ?: throw IllegalArgumentException("$key must be an integer, got: $raw")
+        }
 
     /** The PostgreSQL JDBC URL (e.g. `jdbc:postgresql://localhost:5432/ldv_logging`). */
     val postgresqlUrl: String

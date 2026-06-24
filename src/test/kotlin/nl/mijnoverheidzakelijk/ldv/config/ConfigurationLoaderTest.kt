@@ -271,6 +271,56 @@ internal class ConfigurationLoaderTest {
     }
 
     @Nested
+    @DisplayName("clickhouseQueryTimeoutSeconds")
+    inner class ClickhouseQueryTimeoutTests {
+
+        @Test
+        fun `defaults when key absent`() {
+            every {
+                mockConfig.getOptionalValue("logboekdataverwerking.clickhouse.query-timeout-seconds", String::class.java)
+            } returns Optional.empty()
+
+            assert(
+                ConfigurationLoader.clickhouseQueryTimeoutSeconds ==
+                    ConfigurationLoader.DEFAULT_CLICKHOUSE_QUERY_TIMEOUT_SECONDS
+            )
+        }
+
+        @Test
+        fun `defaults when value blank`() {
+            every {
+                mockConfig.getOptionalValue("logboekdataverwerking.clickhouse.query-timeout-seconds", String::class.java)
+            } returns Optional.of("  ")
+
+            assert(
+                ConfigurationLoader.clickhouseQueryTimeoutSeconds ==
+                    ConfigurationLoader.DEFAULT_CLICKHOUSE_QUERY_TIMEOUT_SECONDS
+            )
+        }
+
+        @Test
+        fun `returns configured value`() {
+            every {
+                mockConfig.getOptionalValue("logboekdataverwerking.clickhouse.query-timeout-seconds", String::class.java)
+            } returns Optional.of("45")
+
+            assert(ConfigurationLoader.clickhouseQueryTimeoutSeconds == 45)
+        }
+
+        @Test
+        fun `throws a contextual error on non-numeric value`() {
+            every {
+                mockConfig.getOptionalValue("logboekdataverwerking.clickhouse.query-timeout-seconds", String::class.java)
+            } returns Optional.of("soon")
+
+            val ex = assertThrows<IllegalArgumentException> {
+                ConfigurationLoader.clickhouseQueryTimeoutSeconds
+            }
+            assert(ex.message!!.contains("query-timeout-seconds"))
+        }
+    }
+
+    @Nested
     @DisplayName("validatePostgresqlConfig")
     inner class ValidatePostgresqlConfigTests {
 

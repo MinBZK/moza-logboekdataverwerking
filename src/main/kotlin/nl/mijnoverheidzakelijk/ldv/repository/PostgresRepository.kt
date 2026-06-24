@@ -6,6 +6,7 @@ import nl.mijnoverheidzakelijk.ldv.exporter.SpanRow
 import java.sql.Connection
 import java.sql.DriverManager
 import java.sql.SQLException
+import java.sql.Statement
 import java.util.logging.Level
 import java.util.logging.Logger
 
@@ -43,7 +44,7 @@ class PostgresRepository(
         ConfigurationLoader.postgresqlConnectionValidationTimeoutSeconds,
 ) : SpanRepository {
     init {
-        requireValidTableName(table)
+        TableNames.requireValid(table)
         require(connectionValidationTimeoutSeconds >= 0) {
             "connectionValidationTimeoutSeconds must be >= 0, was $connectionValidationTimeoutSeconds"
         }
@@ -121,10 +122,10 @@ class PostgresRepository(
                     CREATE TABLE IF NOT EXISTS $table (
                         trace_id text NOT NULL,
                         span_id text NOT NULL,
-                        status text,
-                        "name" text,
-                        start_time bigint,
-                        end_time bigint,
+                        status text NOT NULL,
+                        "name" text NOT NULL,
+                        start_time bigint NOT NULL,
+                        end_time bigint NOT NULL,
                         parent_span_id text,
                         attributes jsonb,
                         resource jsonb,
@@ -149,15 +150,15 @@ class PostgresRepository(
      * lock nor risks leaving an open transaction behind on a serialization error.
      * A serialization failure is reported distinctly from a database failure.
      *
-     * @param spans rows produced by [nl.mijnoverheidzakelijk.ldv.exporter.SpanMapper]
+     * @param rows rows produced by [nl.mijnoverheidzakelijk.ldv.exporter.SpanMapper]
      * @throws RuntimeException if serialization or the insert fails
      */
     @Synchronized
-    override fun insert(spans: List<SpanRow>) {
-        if (spans.isEmpty()) return
+    override fun insert(rows: List<SpanRow>) {
+        if (rows.isEmpty()) return
 
         val prepared = try {
-            spans.map { span ->
+            rows.map { span ->
                 PreparedRow(
                     span = span,
                     attributesJson = objectMapper.writeValueAsString(span.attributes),
@@ -177,14 +178,22 @@ class PostgresRepository(
                     statement.setString(2, span.spanId)
                     statement.setString(3, span.status.name)
                     statement.setString(4, span.name)
-                    statement.setLong(5, span.startTime)
-                    statement.setLong(6, span.endTime)
+                    statement.setLong(5, span.startTimeMillis)
+                    statement.setLong(6, span.endTimeMillis)
                     statement.setString(7, span.parentSpanId)
                     statement.setString(8, attributesJson)
                     statement.setString(9, resourceJson)
                     statement.addBatch()
                 }
-                statement.executeBatch()
+                val updateCounts = statement.executeBatch()
+                // The PostgreSQL driver aborts the batch and throws on the first
+                // failing row, so reaching here normally means every row succeeded.
+                // Guard against a driver/config that instead continues past failures
+                // and reports EXECUTE_FAILED per row, which would otherwise let
+                // commit() persist a partial batch and silently lose LDV records.
+                if (updateCounts.any { it == Statement.EXECUTE_FAILED }) {
+                    throw SQLException("PostgreSQL batch insert reported a failed row")
+                }
             }
             conn.commit()
         } catch (e: SQLException) {
@@ -220,13 +229,5 @@ class PostgresRepository(
 
     companion object {
         private val LOGGER: Logger = Logger.getLogger(PostgresRepository::class.java.getName())
-
-        private val TABLE_NAME_PATTERN = Regex("^[a-zA-Z_][a-zA-Z0-9_.]*$")
-
-        private fun requireValidTableName(table: String) {
-            require(TABLE_NAME_PATTERN.matches(table)) {
-                "Invalid table name: $table"
-            }
-        }
     }
 }

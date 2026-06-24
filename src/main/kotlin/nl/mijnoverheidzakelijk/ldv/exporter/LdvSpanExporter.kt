@@ -22,6 +22,7 @@ import java.util.logging.Logger
  */
 class LdvSpanExporter(
     private val repository: SpanRepository,
+    private val maxLoggedSpanIds: Int = DEFAULT_MAX_LOGGED_SPAN_IDS,
 ) : SpanExporter {
 
     init {
@@ -70,12 +71,16 @@ class LdvSpanExporter(
 
     /** Renders `traceId:spanId` for the lost spans, capped to keep the log line bounded. */
     private fun lostSpanIds(spans: Collection<SpanData>): String =
-        spans.joinToString(separator = ", ", limit = MAX_LOGGED_SPAN_IDS, truncated = "…") {
+        spans.joinToString(separator = ", ", limit = maxLoggedSpanIds, truncated = "…") {
             "${it.traceId}:${it.spanId}"
         }
 
     /**
-     * No-op flush for this exporter. Returns success.
+     * Flushes pending exports. This exporter holds no internal buffer — every
+     * batch is written synchronously in [export] — so there is nothing to flush
+     * and this always returns success. (Any queueing lives in the OpenTelemetry
+     * [io.opentelemetry.sdk.trace.export.BatchSpanProcessor], which drains itself
+     * via [export], not via this method.)
      *
      * @return success result code
      */
@@ -97,7 +102,11 @@ class LdvSpanExporter(
     companion object {
         private val LOGGER: Logger = Logger.getLogger(LdvSpanExporter::class.java.getName())
 
-        /** Upper bound on how many lost span ids are listed in a single failure log line. */
-        private const val MAX_LOGGED_SPAN_IDS = 50
+        /**
+         * Default upper bound on how many lost span ids are listed in a single
+         * failure log line. Sized to cover a full `BatchSpanProcessor` default
+         * batch (512) so a whole failed batch is logged without truncation.
+         */
+        const val DEFAULT_MAX_LOGGED_SPAN_IDS = 512
     }
 }

@@ -25,6 +25,7 @@ import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.ValueSource
 import java.io.InputStream
 import java.nio.charset.StandardCharsets
+import java.util.Optional
 import java.util.concurrent.CompletableFuture
 
 internal class ClickHouseRepositoryTest {
@@ -44,6 +45,9 @@ internal class ClickHouseRepositoryTest {
         every { mockConfig.getValue("logboekdataverwerking.clickhouse.password", String::class.java) } returns "testpass"
         every { mockConfig.getValue("logboekdataverwerking.clickhouse.database", String::class.java) } returns "testdb"
         every { mockConfig.getValue("logboekdataverwerking.clickhouse.table", String::class.java) } returns "testtable"
+        every {
+            mockConfig.getOptionalValue("logboekdataverwerking.clickhouse.query-timeout-seconds", String::class.java)
+        } returns Optional.empty()
 
         // Mock Client.Builder
         mockClient = mockk(relaxed = true)
@@ -212,8 +216,8 @@ internal class ClickHouseRepositoryTest {
             spanId = "mySpanId",
             status = StatusCode.OK,
             name = "myName",
-            startTime = 0L,
-            endTime = 0L,
+            startTimeMillis = 0L,
+            endTimeMillis = 0L,
             parentSpanId = parentSpanId,
             attributes = mapOf("attrKey" to "attrValue"),
             resource = mapOf("resKey" to "resValue"),

@@ -76,8 +76,8 @@ internal class LdvSpanExporterTest {
         assert(row.traceId == "myTraceId")
         assert(row.spanId == "mySpanId")
         assert(row.status == StatusCode.OK)
-        assert(row.startTime == 20L)
-        assert(row.endTime == 25L)
+        assert(row.startTimeMillis == 20L)
+        assert(row.endTimeMillis == 25L)
         assert(row.parentSpanId == "myParentSpanId")
         assert(row.attributes == mapOf("attrKey" to "attrValue"))
         assert(row.resource == mapOf("resKey" to "resValue"))
@@ -152,6 +152,8 @@ internal class LdvSpanExporterTest {
     @Test
     fun `Failure logs the lost span ids and truncates beyond the cap`() {
         every { mockRepository.insert(any()) } throws RuntimeException("boom")
+        // Use a small cap so the test does not need a full-batch worth of spans.
+        val cappedExporter = LdvSpanExporter(mockRepository, maxLoggedSpanIds = 50)
         val records = mutableListOf<LogRecord>()
         val handler = object : Handler() {
             override fun publish(record: LogRecord) { records.add(record) }
@@ -162,7 +164,7 @@ internal class LdvSpanExporterTest {
         logger.addHandler(handler)
         try {
             val spans = (1..60).map { span(tid = "t$it", sid = "s$it") }.toMutableSet()
-            exporter.export(spans)
+            cappedExporter.export(spans)
         } finally {
             logger.removeHandler(handler)
         }
@@ -170,7 +172,7 @@ internal class LdvSpanExporterTest {
         val message = records.single { it.level == Level.SEVERE }.message
         assert(message.contains("60 span(s)"))
         assert(message.contains("t1:s1"))
-        assert(message.contains("…")) // truncated past MAX_LOGGED_SPAN_IDS
+        assert(message.contains("…")) // truncated past maxLoggedSpanIds
     }
 
     private fun span(tid: String, sid: String): SpanData = mockk {

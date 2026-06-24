@@ -35,6 +35,8 @@ logboekdataverwerking.clickhouse.username=user
 logboekdataverwerking.clickhouse.password=password
 logboekdataverwerking.clickhouse.database=db_name
 logboekdataverwerking.clickhouse.table=table_name
+# Optioneel: time-out (seconden) voor ClickHouse-queries en -inserts. Standaard 30.
+logboekdataverwerking.clickhouse.query-timeout-seconds=30
 
 # PostgreSQL (gebruikt wanneer dbms=postgresql) - alternatieve backend
 logboekdataverwerking.postgresql.url=jdbc:postgresql://localhost:5432/ldv_logging
@@ -71,6 +73,7 @@ logboekdataverwerking:
         password: password
         database: db_name
         table: table_name
+        query-timeout-seconds: 30
     postgresql:
         url: jdbc:postgresql://localhost:5432/ldv_logging
         username: user
