@@ -14,6 +14,12 @@ object ConfigurationLoader {
     /** Allowed values for the span-processor configuration property. */
     enum class SpanProcessorMode { BATCH, SIMPLE }
 
+    /** Supported database backends for span storage. */
+    enum class Dbms { CLICKHOUSE, POSTGRESQL }
+
+    /** Default for [postgresqlConnectionValidationTimeoutSeconds] when unset. */
+    const val DEFAULT_POSTGRESQL_CONNECTION_VALIDATION_TIMEOUT_SECONDS: Int = 5
+
     /**
      * Provider for the MicroProfile [Config] instance.
      * Can be replaced in tests to provide mock configuration.
@@ -65,6 +71,24 @@ object ConfigurationLoader {
             }
         }
 
+    /**
+     * Selects which database backend stores the spans. `clickhouse` (default) is
+     * the production backend; `postgresql` is a lighter-weight alternative meant
+     * for development. ClickHouse is a fairly heavy tool to run locally, so this
+     * lets developers use PostgreSQL instead.
+     */
+    val dbms: Dbms
+        get() {
+            val raw = getOptionalString("logboekdataverwerking.dbms") ?: return Dbms.CLICKHOUSE
+            return when (raw.lowercase()) {
+                "clickhouse" -> Dbms.CLICKHOUSE
+                "postgresql", "postgres" -> Dbms.POSTGRESQL
+                else -> throw IllegalArgumentException(
+                    "logboekdataverwerking.dbms must be 'clickhouse' or 'postgresql', got: $raw"
+                )
+            }
+        }
+
     /** The ClickHouse server endpoint URL. */
     val clickhouseEndpoint: String
         get() = getValue("logboekdataverwerking.clickhouse.endpoint", String::class.java)
@@ -84,6 +108,35 @@ object ConfigurationLoader {
     /** The ClickHouse table name for storing spans. */
     val clickhouseTable: String
         get() = getValue("logboekdataverwerking.clickhouse.table", String::class.java)
+
+    /** The PostgreSQL JDBC URL (e.g. `jdbc:postgresql://localhost:5432/ldv_logging`). */
+    val postgresqlUrl: String
+        get() = getValue("logboekdataverwerking.postgresql.url", String::class.java)
+
+    /** The PostgreSQL username for authentication. */
+    val postgresqlUsername: String
+        get() = getValue("logboekdataverwerking.postgresql.username", String::class.java)
+
+    /** The PostgreSQL password for authentication. */
+    val postgresqlPassword: String
+        get() = getValue("logboekdataverwerking.postgresql.password", String::class.java)
+
+    /** The PostgreSQL table name for storing spans. */
+    val postgresqlTable: String
+        get() = getValue("logboekdataverwerking.postgresql.table", String::class.java)
+
+    /**
+     * Timeout in seconds for PostgreSQL connection liveness checks
+     * ([java.sql.Connection.isValid]). Optional; defaults to
+     * [DEFAULT_POSTGRESQL_CONNECTION_VALIDATION_TIMEOUT_SECONDS] when unset.
+     */
+    val postgresqlConnectionValidationTimeoutSeconds: Int
+        get() {
+            val key = "logboekdataverwerking.postgresql.connection-validation-timeout-seconds"
+            val raw = getOptionalString(key) ?: return DEFAULT_POSTGRESQL_CONNECTION_VALIDATION_TIMEOUT_SECONDS
+            return raw.toIntOrNull()
+                ?: throw IllegalArgumentException("$key must be an integer, got: $raw")
+        }
 
     /**
      * Validates that all required ClickHouse properties are present and non-blank.
@@ -110,6 +163,43 @@ object ConfigurationLoader {
         }
         check(missing.isEmpty()) {
             "logboekdataverwerking.enabled=true but the following required config keys are missing or blank: $missing"
+        }
+    }
+
+    /**
+     * Validates that all required PostgreSQL properties are present and non-blank.
+     * Intended to be called at startup when [enabled] is true and [dbms] is
+     * `POSTGRESQL`, so misconfiguration surfaces immediately instead of failing
+     * on the first export. The optional connection-validation timeout, if set, is
+     * also resolved here so a non-integer or negative value fails loud at startup
+     * rather than at exporter construction.
+     *
+     * @throws IllegalStateException with a message listing missing or blank keys.
+     * @throws IllegalArgumentException if the connection-validation timeout is not a
+     *         non-negative integer.
+     */
+    fun validatePostgresqlConfig() {
+        val keys = listOf(
+            "logboekdataverwerking.postgresql.url",
+            "logboekdataverwerking.postgresql.username",
+            "logboekdataverwerking.postgresql.password",
+            "logboekdataverwerking.postgresql.table",
+        )
+        val missing = keys.filter { key ->
+            val value = try {
+                configProvider().getValue(key, String::class.java)
+            } catch (_: NoSuchElementException) {
+                null
+            }
+            value.isNullOrBlank()
+        }
+        check(missing.isEmpty()) {
+            "logboekdataverwerking.enabled=true but the following required config keys are missing or blank: $missing"
+        }
+        // Resolve (and thereby validate) the optional timeout: throws on a non-integer.
+        require(postgresqlConnectionValidationTimeoutSeconds >= 0) {
+            "logboekdataverwerking.postgresql.connection-validation-timeout-seconds must be >= 0, " +
+                "was $postgresqlConnectionValidationTimeoutSeconds"
         }
     }
 

@@ -15,7 +15,7 @@ Dit Open Source project is opgezet om de LDV standaard eenvoudig aan nieuwe of b
 
 ## Afhankelijkheden
 
-- **Clickhouse database** - Deze implementatie is gemaakt met een Clickhouse database voor het opslaan van de logging: https://clickhouse.com/
+- **Clickhouse of PostgreSQL database** - Voor het opslaan van de logging wordt standaard een Clickhouse database gebruikt: https://clickhouse.com/. Clickhouse is een vrij zware tool; voor ontwikkeldoeleinden kan ook PostgreSQL worden gebruikt via `logboekdataverwerking.dbms=postgresql` (zie hieronder).
 - **Verwerkingsactiviteiten register** - Bij het loggen van de activiteit wordt verwezen naar een ID van een verwerkingsactiviteit in een activiteiten register. Meer informatie hierover is te vinden in de documentatie van de standaard. Hierbij wordt geen richtlijn opgegeven voor de technische implementatie en deze is daarom niet inbegrepen bij deze implementatie.
 
 ## Hoe te gebruiken
@@ -25,11 +25,24 @@ Om deze package te gebruiken moet je in je (maven) project de volgende variablen
 ```properties
 logboekdataverwerking.enabled=true
 logboekdataverwerking.service-name=service-name
+
+# Database backend: 'clickhouse' (standaard) of 'postgresql'.
+logboekdataverwerking.dbms=clickhouse
+
+# ClickHouse (gebruikt wanneer dbms=clickhouse)
 logboekdataverwerking.clickhouse.endpoint=http://localhost:8123
 logboekdataverwerking.clickhouse.username=user
 logboekdataverwerking.clickhouse.password=password
 logboekdataverwerking.clickhouse.database=db_name
 logboekdataverwerking.clickhouse.table=table_name
+
+# PostgreSQL (gebruikt wanneer dbms=postgresql) - lichter alternatief voor ontwikkeldoeleinden
+logboekdataverwerking.postgresql.url=jdbc:postgresql://localhost:5432/ldv_logging
+logboekdataverwerking.postgresql.username=user
+logboekdataverwerking.postgresql.password=password
+logboekdataverwerking.postgresql.table=spans
+# Optioneel: timeout (seconden) voor connection-liveness checks. Standaard 5.
+logboekdataverwerking.postgresql.connection-validation-timeout-seconds=5
 
 # Optionele OpenTelemetry resource-attributen
 # Worden alleen toegevoegd aan de standalone OpenTelemetry resource;
@@ -51,15 +64,26 @@ logboekdataverwerking:
     service-version: 1.0.0
     deployment-environment: production
     span-processor: batch
+    dbms: clickhouse
     clickhouse:
         endpoint: http://localhost:8123
         username: user
         password: password
         database: db_name
         table: table_name
+    postgresql:
+        url: jdbc:postgresql://localhost:5432/ldv_logging
+        username: user
+        password: password
+        table: spans
+        connection-validation-timeout-seconds: 5
 ```
 
-Als `enabled=true` is, valideert de library bij applicatiestart dat alle `clickhouse.*` properties aanwezig en niet-leeg zijn. Ontbrekende of lege waarden geven een `IllegalStateException` met een lijst van de missende keys, in plaats van pas bij de eerste export te falen.
+Als `enabled=true` is, valideert de library bij applicatiestart dat alle properties van de gekozen backend aanwezig en niet-leeg zijn (`clickhouse.*` bij `dbms=clickhouse`, `postgresql.*` bij `dbms=postgresql`). Ontbrekende of lege waarden geven een `IllegalStateException` met een lijst van de missende keys, in plaats van pas bij de eerste export te falen.
+
+PostgreSQL is een lichter alternatief voor ClickHouse, bedoeld voor ontwikkeldoeleinden. De `attributes`- en `resource`-velden worden opgeslagen als `jsonb`-kolommen. Start een lokale PostgreSQL met `docker-compose -f compose.yml up -d postgresql`.
+
+> **Let op:** De PostgreSQL-backend is bedoeld voor ontwikkeling, niet voor productie. Bij een mislukte export worden de betreffende spans niet opnieuw aangeboden — geen enkele OpenTelemetry-spanprocessor (`batch` of `simple`) herhaalt een mislukte export. Met de standaard `batch`-processor weet de applicatie bovendien niet óf de opslag is gelukt. Voor een verwerkingenlogboek conform de LDV-acknowledgement-eis: gebruik `span-processor=simple`, zodat de applicatie synchroon ziet of de logregel is opgeslagen. Dit garandeert geen opslag bij een DB-storing, alleen dat falen direct zichtbaar is. Gebruik in productie ClickHouse.
 
 Hierna kun je endpoints voorzien van de `@Logboek()` annotatie:
 

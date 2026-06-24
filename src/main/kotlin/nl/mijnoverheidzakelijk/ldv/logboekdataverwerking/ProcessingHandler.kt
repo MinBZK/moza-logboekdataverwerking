@@ -20,6 +20,7 @@ import jakarta.inject.Inject
 import nl.mijnoverheidzakelijk.ldv.config.ConfigurationLoader
 import nl.mijnoverheidzakelijk.ldv.exporter.ClickHouseSpanExporter
 import nl.mijnoverheidzakelijk.ldv.exporter.LdvSpanFilterProcessor
+import nl.mijnoverheidzakelijk.ldv.exporter.PostgresSpanExporter
 import org.apache.commons.configuration2.ex.ConfigurationException
 import java.util.logging.Logger
 
@@ -142,8 +143,9 @@ class ProcessingHandler {
         }
 
         /**
-         * Builds the LDV span-export pipeline. When LDV is enabled: the ClickHouse
-         * exporter wrapped in the configured [SpanProcessor], then wrapped in
+         * Builds the LDV span-export pipeline. When LDV is enabled: the database
+         * exporter selected via `logboekdataverwerking.dbms` (ClickHouse or
+         * PostgreSQL) wrapped in the configured [SpanProcessor], then wrapped in
          * [LdvSpanFilterProcessor] so only LDV spans are exported. When disabled it
          * returns a no-op processor, so the package contributes nothing to a host's
          * SDK (no exporter, no worker thread, no per-span filtering).
@@ -155,7 +157,8 @@ class ProcessingHandler {
          * method never creates an OpenTelemetry SDK, so it cannot introduce a
          * second instance.
          *
-         * @throws IllegalStateException if `enabled` but ClickHouse config is incomplete
+         * @throws IllegalStateException if `enabled` but the selected backend's config is incomplete
+         * @throws IllegalArgumentException if `logboekdataverwerking.dbms` is set to an unsupported value
          */
         internal fun buildLdvSpanProcessor(): SpanProcessor {
             if (!ConfigurationLoader.enabled) {
@@ -166,10 +169,18 @@ class ProcessingHandler {
                 return SpanProcessor.composite(emptyList())
             }
 
-            // Fail-loud on startup if the ClickHouse exporter is misconfigured,
+            // Fail-loud on startup if the selected exporter is misconfigured,
             // instead of silently dropping spans at first export.
-            ConfigurationLoader.validateClickhouseConfig()
-            val exporter: SpanExporter = ClickHouseSpanExporter()
+            val exporter: SpanExporter = when (ConfigurationLoader.dbms) {
+                ConfigurationLoader.Dbms.CLICKHOUSE -> {
+                    ConfigurationLoader.validateClickhouseConfig()
+                    ClickHouseSpanExporter()
+                }
+                ConfigurationLoader.Dbms.POSTGRESQL -> {
+                    ConfigurationLoader.validatePostgresqlConfig()
+                    PostgresSpanExporter()
+                }
+            }
 
             val delegate: SpanProcessor = when (ConfigurationLoader.spanProcessor) {
                 ConfigurationLoader.SpanProcessorMode.SIMPLE -> SimpleSpanProcessor.create(exporter)

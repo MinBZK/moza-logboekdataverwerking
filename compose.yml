@@ -7,3 +7,14 @@ services:
       CLICKHOUSE_USER: "user"
       CLICKHOUSE_PASSWORD: "password"
       CLICKHOUSE_DB: "ldv_logging"
+
+  # Lighter-weight alternative to ClickHouse for development.
+  # Use logboekdataverwerking.dbms=postgresql to target this backend.
+  postgresql:
+    image: postgres:17
+    ports:
+    - "5432:5432"
+    environment:
+      POSTGRES_USER: "user"
+      POSTGRES_PASSWORD: "password"
+      POSTGRES_DB: "ldv_logging"

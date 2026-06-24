@@ -68,6 +68,13 @@
             <artifactId>client-v2</artifactId>
             <version>0.9.6</version>
         </dependency>
+        <!-- PostgreSQL JDBC driver: lighter-weight backend for development.
+             Selected via logboekdataverwerking.dbms=postgresql. -->
+        <dependency>
+            <groupId>org.postgresql</groupId>
+            <artifactId>postgresql</artifactId>
+            <version>42.7.7</version>
+        </dependency>
         <dependency>
             <groupId>io.opentelemetry</groupId>
             <artifactId>opentelemetry-api</artifactId>
