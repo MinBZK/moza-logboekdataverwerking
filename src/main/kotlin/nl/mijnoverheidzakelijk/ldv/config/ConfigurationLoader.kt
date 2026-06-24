@@ -73,9 +73,10 @@ object ConfigurationLoader {
 
     /**
      * Selects which database backend stores the spans. `clickhouse` (default) is
-     * the production backend; `postgresql` is a lighter-weight alternative meant
-     * for development. ClickHouse is a fairly heavy tool to run locally, so this
-     * lets developers use PostgreSQL instead.
+     * optimised for very high span volumes; `postgresql` is an alternative backend
+     * for deployments where running PostgreSQL is operationally preferable. Both
+     * are production-capable; the no-retry/acknowledgement caveat (see the README)
+     * applies equally to either backend.
      */
     val dbms: Dbms
         get() {

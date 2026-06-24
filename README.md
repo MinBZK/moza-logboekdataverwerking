@@ -15,7 +15,7 @@ Dit Open Source project is opgezet om de LDV standaard eenvoudig aan nieuwe of b
 
 ## Afhankelijkheden
 
-- **Clickhouse of PostgreSQL database** - Voor het opslaan van de logging wordt standaard een Clickhouse database gebruikt: https://clickhouse.com/. Clickhouse is een vrij zware tool; voor ontwikkeldoeleinden kan ook PostgreSQL worden gebruikt via `logboekdataverwerking.dbms=postgresql` (zie hieronder).
+- **Clickhouse of PostgreSQL database** - Voor het opslaan van de logging wordt standaard ClickHouse gebruikt: https://clickhouse.com/. ClickHouse is geoptimaliseerd voor zeer grote volumes. Organisaties die liever PostgreSQL beheren, kunnen dat als backend kiezen via `logboekdataverwerking.dbms=postgresql` (zie hieronder).
 - **Verwerkingsactiviteiten register** - Bij het loggen van de activiteit wordt verwezen naar een ID van een verwerkingsactiviteit in een activiteiten register. Meer informatie hierover is te vinden in de documentatie van de standaard. Hierbij wordt geen richtlijn opgegeven voor de technische implementatie en deze is daarom niet inbegrepen bij deze implementatie.
 
 ## Hoe te gebruiken
@@ -36,12 +36,12 @@ logboekdataverwerking.clickhouse.password=password
 logboekdataverwerking.clickhouse.database=db_name
 logboekdataverwerking.clickhouse.table=table_name
 
-# PostgreSQL (gebruikt wanneer dbms=postgresql) - lichter alternatief voor ontwikkeldoeleinden
+# PostgreSQL (gebruikt wanneer dbms=postgresql) - alternatieve backend
 logboekdataverwerking.postgresql.url=jdbc:postgresql://localhost:5432/ldv_logging
 logboekdataverwerking.postgresql.username=user
 logboekdataverwerking.postgresql.password=password
 logboekdataverwerking.postgresql.table=spans
-# Optioneel: timeout (seconden) voor connection-liveness checks. Standaard 5.
+# Optioneel: time-out (seconden) voor het controleren of de verbinding nog actief is. Standaard 5.
 logboekdataverwerking.postgresql.connection-validation-timeout-seconds=5
 
 # Optionele OpenTelemetry resource-attributen
@@ -81,9 +81,9 @@ logboekdataverwerking:
 
 Als `enabled=true` is, valideert de library bij applicatiestart dat alle properties van de gekozen backend aanwezig en niet-leeg zijn (`clickhouse.*` bij `dbms=clickhouse`, `postgresql.*` bij `dbms=postgresql`). Ontbrekende of lege waarden geven een `IllegalStateException` met een lijst van de missende keys, in plaats van pas bij de eerste export te falen.
 
-PostgreSQL is een lichter alternatief voor ClickHouse, bedoeld voor ontwikkeldoeleinden. De `attributes`- en `resource`-velden worden opgeslagen als `jsonb`-kolommen. Start een lokale PostgreSQL met `docker-compose -f compose.yml up -d postgresql`.
+PostgreSQL is een alternatieve backend voor ClickHouse, bruikbaar waar PostgreSQL operationeel beter past. De `attributes`- en `resource`-velden worden opgeslagen als `jsonb`-kolommen. Start een lokale PostgreSQL met `docker-compose -f compose.yml up -d postgresql`.
 
-> **Let op:** De PostgreSQL-backend is bedoeld voor ontwikkeling, niet voor productie. Bij een mislukte export worden de betreffende spans niet opnieuw aangeboden — geen enkele OpenTelemetry-spanprocessor (`batch` of `simple`) herhaalt een mislukte export. Met de standaard `batch`-processor weet de applicatie bovendien niet óf de opslag is gelukt. Voor een verwerkingenlogboek conform de LDV-acknowledgement-eis: gebruik `span-processor=simple`, zodat de applicatie synchroon ziet of de logregel is opgeslagen. Dit garandeert geen opslag bij een DB-storing, alleen dat falen direct zichtbaar is. Gebruik in productie ClickHouse.
+> **Let op (geldt voor beide backends):** Bij een mislukte export worden de betreffende spans niet opnieuw aangeboden — geen enkele OpenTelemetry-spanprocessor (`batch` of `simple`) probeert een mislukte export opnieuw. Met de standaard `batch`-processor weet de applicatie bovendien niet óf de opslag is geslaagd. Voor een verwerkingenlogboek dat aan de LDV-acknowledgement-eis voldoet: gebruik `span-processor=simple`, zodat de applicatie synchroon ziet of de logregel is opgeslagen. Dat garandeert geen opslag bij een databasestoring, maar maakt een mislukking wél direct zichtbaar. Kies tussen ClickHouse en PostgreSQL op basis van volume en operationele voorkeur: ClickHouse is geoptimaliseerd voor zeer grote volumes, PostgreSQL is voor veel organisaties eenvoudiger te beheren.
 
 Hierna kun je endpoints voorzien van de `@Logboek()` annotatie:
 

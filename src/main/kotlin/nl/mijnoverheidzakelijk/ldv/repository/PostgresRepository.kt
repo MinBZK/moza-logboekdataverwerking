@@ -12,8 +12,9 @@ import java.util.logging.Logger
 /**
  * Repository encapsulating basic PostgreSQL operations used by the exporter.
  *
- * PostgreSQL is offered as a lighter-weight alternative to ClickHouse for
- * development. The span `attributes` and `resource` maps are stored as `jsonb`
+ * PostgreSQL is an alternative backend to ClickHouse, suited to deployments where
+ * running PostgreSQL is operationally preferable. The span `attributes` and
+ * `resource` maps are stored as `jsonb`
  * columns; the remaining fields map to plain columns whose names match the
  * [SpanRow] fields produced by
  * [nl.mijnoverheidzakelijk.ldv.exporter.SpanMapper].

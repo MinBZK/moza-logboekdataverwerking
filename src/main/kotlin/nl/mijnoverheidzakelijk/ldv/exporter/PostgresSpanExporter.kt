@@ -10,8 +10,9 @@ import java.util.logging.Logger
 /**
  * OpenTelemetry [SpanExporter] that writes spans to a PostgreSQL table.
  *
- * PostgreSQL is a lighter-weight alternative to ClickHouse intended for
- * development. The exporter is selected via `logboekdataverwerking.dbms=postgresql`.
+ * PostgreSQL is an alternative backend to ClickHouse, suited to deployments where
+ * running PostgreSQL is operationally preferable (ClickHouse is optimised for very
+ * high span volumes). The exporter is selected via `logboekdataverwerking.dbms=postgresql`.
  * On construction it ensures the target schema exists and then inserts exported
  * spans in batches.
  */
