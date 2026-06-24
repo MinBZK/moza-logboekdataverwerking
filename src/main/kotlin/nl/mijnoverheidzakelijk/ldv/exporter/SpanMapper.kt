@@ -1,5 +1,6 @@
 package nl.mijnoverheidzakelijk.ldv.exporter
 
+import io.opentelemetry.api.common.Attributes
 import io.opentelemetry.sdk.trace.data.SpanData
 import java.util.concurrent.TimeUnit
 
@@ -33,8 +34,12 @@ object SpanMapper {
             startTimeMillis = TimeUnit.NANOSECONDS.toMillis(span.startEpochNanos),
             endTimeMillis = TimeUnit.NANOSECONDS.toMillis(span.endEpochNanos),
             parentSpanId = if (span.parentSpanContext.isValid) span.parentSpanId else null,
-            attributes = span.attributes.asMap().entries.associate { it.key.key to it.value.toString() },
-            resource = span.resource.attributes.asMap().entries.associate { it.key.key to it.value.toString() }
+            attributes = span.attributes.toStringMap(),
+            resource = span.resource.attributes.toStringMap()
         )
     }
+
+    /** Flattens OpenTelemetry [Attributes] to a `String`→`String` map, stringifying each value. */
+    private fun Attributes.toStringMap(): Map<String, String> =
+        asMap().entries.associate { it.key.key to it.value.toString() }
 }

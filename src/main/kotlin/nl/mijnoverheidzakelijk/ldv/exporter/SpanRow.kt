@@ -12,6 +12,14 @@ import io.opentelemetry.api.trace.StatusCode
  * time, so a renamed or retyped field is a build error rather than a span
  * silently dropped at insert time.
  *
+ * Deliberately does NOT validate `endTimeMillis >= startTimeMillis` (or any other
+ * record-content invariant) in an `init` block. Throwing here would abort
+ * [SpanMapper.toRow] and, under the synchronous `SimpleSpanProcessor`, drop the
+ * audit record on benign clock skew or a non-monotonic clock — violating the LDV
+ * rule that a record must never be lost. If such an anomaly ever needs surfacing,
+ * do it non-fatally in [SpanMapper] (log / derived attribute), never as a `require`
+ * here.
+ *
  * @property startTimeMillis span start as milliseconds since the Unix epoch (the
  *           unit the LDV log-record structure requires).
  * @property endTimeMillis span end as milliseconds since the Unix epoch.

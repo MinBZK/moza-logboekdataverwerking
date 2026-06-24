@@ -84,7 +84,16 @@ logboekdataverwerking:
 
 Als `enabled=true` is, valideert de library bij applicatiestart dat alle properties van de gekozen backend aanwezig en niet-leeg zijn (`clickhouse.*` bij `dbms=clickhouse`, `postgresql.*` bij `dbms=postgresql`). Ontbrekende of lege waarden geven een `IllegalStateException` met een lijst van de missende keys, in plaats van pas bij de eerste export te falen.
 
-PostgreSQL is een alternatieve backend voor ClickHouse, bruikbaar waar PostgreSQL operationeel beter past. De `attributes`- en `resource`-velden worden opgeslagen als `jsonb`-kolommen. Start een lokale PostgreSQL met `docker-compose -f compose.yml up -d postgresql`.
+PostgreSQL is een alternatieve backend voor ClickHouse, bruikbaar waar PostgreSQL operationeel beter past. De `attributes`- en `resource`-velden worden opgeslagen als `jsonb`-kolommen.
+
+De JDBC-drivers van beide backends zijn in deze library als `optional` gemarkeerd: ze komen niet transitief mee, zodat je applicatie alléén de driver van de gekozen backend hoeft te declareren (`com.clickhouse:client-v2` óf `org.postgresql:postgresql`). Kies je een backend zonder de bijbehorende driver, dan faalt de applicatie luid bij start (zie de config-validatie hierboven).
+
+De lokale databases draaien achter een Compose-profiel, zodat je alleen de gekozen backend start:
+
+```bash
+docker compose --profile clickhouse up -d    # standaard backend
+docker compose --profile postgresql up -d    # alternatieve backend
+```
 
 > **Let op (geldt voor beide backends):** Bij een mislukte export worden de betreffende spans niet opnieuw aangeboden — geen enkele OpenTelemetry-spanprocessor (`batch` of `simple`) probeert een mislukte export opnieuw. Met de standaard `batch`-processor weet de applicatie bovendien niet óf de opslag is geslaagd. Voor een verwerkingenlogboek dat aan de LDV-acknowledgement-eis voldoet: gebruik `span-processor=simple`, zodat de applicatie synchroon ziet of de logregel is opgeslagen. Dat garandeert geen opslag bij een databasestoring, maar maakt een mislukking wél direct zichtbaar. Kies tussen ClickHouse en PostgreSQL op basis van volume en operationele voorkeur: ClickHouse is geoptimaliseerd voor zeer grote volumes, PostgreSQL is voor veel organisaties eenvoudiger te beheren.
 

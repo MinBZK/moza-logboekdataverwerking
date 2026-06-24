@@ -120,12 +120,10 @@ object ConfigurationLoader {
      * [DEFAULT_CLICKHOUSE_QUERY_TIMEOUT_SECONDS] when unset.
      */
     val clickhouseQueryTimeoutSeconds: Int
-        get() {
-            val key = "logboekdataverwerking.clickhouse.query-timeout-seconds"
-            val raw = getOptionalString(key) ?: return DEFAULT_CLICKHOUSE_QUERY_TIMEOUT_SECONDS
-            return raw.toIntOrNull()
-                ?: throw IllegalArgumentException("$key must be an integer, got: $raw")
-        }
+        get() = getOptionalInt(
+            "logboekdataverwerking.clickhouse.query-timeout-seconds",
+            DEFAULT_CLICKHOUSE_QUERY_TIMEOUT_SECONDS,
+        )
 
     /** The PostgreSQL JDBC URL (e.g. `jdbc:postgresql://localhost:5432/ldv_logging`). */
     val postgresqlUrl: String
@@ -149,12 +147,10 @@ object ConfigurationLoader {
      * [DEFAULT_POSTGRESQL_CONNECTION_VALIDATION_TIMEOUT_SECONDS] when unset.
      */
     val postgresqlConnectionValidationTimeoutSeconds: Int
-        get() {
-            val key = "logboekdataverwerking.postgresql.connection-validation-timeout-seconds"
-            val raw = getOptionalString(key) ?: return DEFAULT_POSTGRESQL_CONNECTION_VALIDATION_TIMEOUT_SECONDS
-            return raw.toIntOrNull()
-                ?: throw IllegalArgumentException("$key must be an integer, got: $raw")
-        }
+        get() = getOptionalInt(
+            "logboekdataverwerking.postgresql.connection-validation-timeout-seconds",
+            DEFAULT_POSTGRESQL_CONNECTION_VALIDATION_TIMEOUT_SECONDS,
+        )
 
     /**
      * Validates that all required ClickHouse properties are present and non-blank.
@@ -164,24 +160,15 @@ object ConfigurationLoader {
      * @throws IllegalStateException with a message listing missing or blank keys.
      */
     fun validateClickhouseConfig() {
-        val keys = listOf(
-            "logboekdataverwerking.clickhouse.endpoint",
-            "logboekdataverwerking.clickhouse.username",
-            "logboekdataverwerking.clickhouse.password",
-            "logboekdataverwerking.clickhouse.database",
-            "logboekdataverwerking.clickhouse.table",
+        requireConfigKeysPresent(
+            listOf(
+                "logboekdataverwerking.clickhouse.endpoint",
+                "logboekdataverwerking.clickhouse.username",
+                "logboekdataverwerking.clickhouse.password",
+                "logboekdataverwerking.clickhouse.database",
+                "logboekdataverwerking.clickhouse.table",
+            )
         )
-        val missing = keys.filter { key ->
-            val value = try {
-                configProvider().getValue(key, String::class.java)
-            } catch (_: NoSuchElementException) {
-                null
-            }
-            value.isNullOrBlank()
-        }
-        check(missing.isEmpty()) {
-            "logboekdataverwerking.enabled=true but the following required config keys are missing or blank: $missing"
-        }
     }
 
     /**
@@ -197,12 +184,25 @@ object ConfigurationLoader {
      *         non-negative integer.
      */
     fun validatePostgresqlConfig() {
-        val keys = listOf(
-            "logboekdataverwerking.postgresql.url",
-            "logboekdataverwerking.postgresql.username",
-            "logboekdataverwerking.postgresql.password",
-            "logboekdataverwerking.postgresql.table",
+        requireConfigKeysPresent(
+            listOf(
+                "logboekdataverwerking.postgresql.url",
+                "logboekdataverwerking.postgresql.username",
+                "logboekdataverwerking.postgresql.password",
+                "logboekdataverwerking.postgresql.table",
+            )
         )
+        // Resolve (and thereby validate) the optional timeout: throws on a non-integer.
+        require(postgresqlConnectionValidationTimeoutSeconds >= 0) {
+            "logboekdataverwerking.postgresql.connection-validation-timeout-seconds must be >= 0, " +
+                "was $postgresqlConnectionValidationTimeoutSeconds"
+        }
+    }
+
+    /**
+     * @throws IllegalStateException listing any of [keys] that are missing or blank.
+     */
+    private fun requireConfigKeysPresent(keys: List<String>) {
         val missing = keys.filter { key ->
             val value = try {
                 configProvider().getValue(key, String::class.java)
@@ -213,11 +213,6 @@ object ConfigurationLoader {
         }
         check(missing.isEmpty()) {
             "logboekdataverwerking.enabled=true but the following required config keys are missing or blank: $missing"
-        }
-        // Resolve (and thereby validate) the optional timeout: throws on a non-integer.
-        require(postgresqlConnectionValidationTimeoutSeconds >= 0) {
-            "logboekdataverwerking.postgresql.connection-validation-timeout-seconds must be >= 0, " +
-                "was $postgresqlConnectionValidationTimeoutSeconds"
         }
     }
 
@@ -239,5 +234,15 @@ object ConfigurationLoader {
         if (!optional.isPresent) return null
         val value = optional.get()
         return if (value.isBlank()) null else value
+    }
+
+    /**
+     * Resolves an optional Int configuration value, returning [default] when the
+     * key is absent or blank and throwing on a non-integer value.
+     */
+    private fun getOptionalInt(key: String, default: Int): Int {
+        val raw = getOptionalString(key) ?: return default
+        return raw.toIntOrNull()
+            ?: throw IllegalArgumentException("$key must be an integer, got: $raw")
     }
 }

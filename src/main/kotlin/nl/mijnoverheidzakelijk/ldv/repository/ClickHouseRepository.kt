@@ -35,8 +35,10 @@ class ClickHouseRepository(
 
     init {
         TableNames.requireValid(table)
-        require(queryTimeoutSeconds >= 0) {
-            "queryTimeoutSeconds must be >= 0, was $queryTimeoutSeconds"
+        // Must be > 0, not >= 0: Future.get(0, SECONDS) polls once and times out
+        // immediately rather than waiting, which would fail every export.
+        require(queryTimeoutSeconds > 0) {
+            "queryTimeoutSeconds must be > 0, was $queryTimeoutSeconds"
         }
     }
 

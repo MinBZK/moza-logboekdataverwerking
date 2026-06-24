@@ -27,6 +27,7 @@ import java.io.InputStream
 import java.nio.charset.StandardCharsets
 import java.util.Optional
 import java.util.concurrent.CompletableFuture
+import java.util.concurrent.TimeoutException
 
 internal class ClickHouseRepositoryTest {
 
@@ -150,6 +151,52 @@ internal class ClickHouseRepositoryTest {
             assertThrows<IllegalArgumentException> {
                 ClickHouseRepository()
             }
+        }
+    }
+
+    @Nested
+    @DisplayName("queryTimeoutSeconds")
+    inner class QueryTimeoutTests {
+
+        @ParameterizedTest(name = "Rejects non-positive timeout: {0}")
+        @ValueSource(ints = [0, -1])
+        fun `Rejects a non-positive query timeout`(timeout: Int) {
+            val ex = assertThrows<IllegalArgumentException> {
+                ClickHouseRepository(queryTimeoutSeconds = timeout)
+            }
+            assert(ex.message!!.contains("queryTimeoutSeconds"))
+        }
+
+        // A real, never-completing CompletableFuture combined with a 1s query
+        // timeout makes the repository's `.get(timeout, SECONDS)` throw a genuine
+        // TimeoutException. We do NOT mock CompletableFuture.get itself: it is a
+        // final java.base method that mockk cannot reliably intercept, and the
+        // auto-hint recording then calls the REAL blocking get, hanging the suite.
+
+        @Test
+        fun `Wraps a timed-out schema query as a RuntimeException`() {
+            val neverCompletes: CompletableFuture<QueryResponse> = CompletableFuture()
+            every { mockClient.query(any<String>()) } returns neverCompletes
+
+            val repo = ClickHouseRepository(queryTimeoutSeconds = 1)
+            val exception = assertThrows<RuntimeException> {
+                repo.ensureSchema()
+            }
+            assert(exception.message == "Failed to ensure ClickHouse schema")
+            assert(exception.cause is TimeoutException)
+        }
+
+        @Test
+        fun `Wraps a timed-out insert as a RuntimeException`() {
+            val neverCompletes: CompletableFuture<InsertResponse> = CompletableFuture()
+            every { mockClient.insert(any<String>(), any<InputStream>(), any<ClickHouseFormat>()) } returns neverCompletes
+
+            val repo = ClickHouseRepository(queryTimeoutSeconds = 1)
+            val exception = assertThrows<RuntimeException> {
+                repo.insertJsonEachRow("""{"traceId":"123"}""")
+            }
+            assert(exception.message == "Failed to insert into ClickHouse")
+            assert(exception.cause is TimeoutException)
         }
     }
 

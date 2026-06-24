@@ -116,13 +116,15 @@ internal class PostgresRepositoryTest {
 
             val ddl = sql.captured
             assert(ddl.contains("CREATE TABLE IF NOT EXISTS spans"))
-            assert(ddl.contains("trace_id text"))
-            assert(ddl.contains("span_id text"))
-            assert(ddl.contains("status text"))
-            assert(ddl.contains("\"name\" text"))
-            assert(ddl.contains("start_time bigint"))
-            assert(ddl.contains("end_time bigint"))
+            // LDV-required fields are NOT NULL; parent_span_id is optional (nullable).
+            assert(ddl.contains("trace_id text NOT NULL"))
+            assert(ddl.contains("span_id text NOT NULL"))
+            assert(ddl.contains("status text NOT NULL"))
+            assert(ddl.contains("\"name\" text NOT NULL"))
+            assert(ddl.contains("start_time bigint NOT NULL"))
+            assert(ddl.contains("end_time bigint NOT NULL"))
             assert(ddl.contains("parent_span_id text"))
+            assert(!ddl.contains("parent_span_id text NOT NULL"))
             assert(ddl.contains("attributes jsonb"))
             assert(ddl.contains("resource jsonb"))
             assert(ddl.contains("PRIMARY KEY (trace_id, span_id)"))
@@ -245,6 +247,31 @@ internal class PostgresRepositoryTest {
             assert(exception.message == "Failed to insert into PostgreSQL")
             verify { mockConnection.rollback() }
             verify { mockConnection.close() }
+        }
+
+        @Test
+        fun `Rolls back, drops the connection and throws when executeBatch reports a failed row`() {
+            // A driver in continue-on-error mode returns EXECUTE_FAILED per failed row
+            // instead of throwing; that partial batch must NOT be committed.
+            every { mockPreparedStatement.executeBatch() } returns intArrayOf(1, Statement.EXECUTE_FAILED)
+
+            val exception = assertThrows<RuntimeException> {
+                repository().insert(listOf(spanRow(spanId = "a"), spanRow(spanId = "b")))
+            }
+            assert(exception.message == "Failed to insert into PostgreSQL")
+            verify { mockConnection.rollback() }
+            verify { mockConnection.close() }
+            verify(exactly = 0) { mockConnection.commit() }
+        }
+
+        @Test
+        fun `Commits when executeBatch reports all rows succeeded`() {
+            every { mockPreparedStatement.executeBatch() } returns intArrayOf(1, 1)
+
+            repository().insert(listOf(spanRow(spanId = "a"), spanRow(spanId = "b")))
+
+            verify { mockConnection.commit() }
+            verify(exactly = 0) { mockConnection.rollback() }
         }
 
         @Test
