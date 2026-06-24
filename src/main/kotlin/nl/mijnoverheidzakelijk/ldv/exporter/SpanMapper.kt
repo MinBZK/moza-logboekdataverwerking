@@ -17,9 +17,9 @@ object SpanMapper {
      * required by the LDV log-record structure. `attributes` and `resource` are
      * kept as string maps for the repository to serialize (e.g. to a JSON
      * column). `parentSpanId` is `null` for root spans (invalid parent context),
-     * matching the LDV spec where `parent_span_id` is optional. Note this diverges
-     * intentionally from the ClickHouse exporter, which writes the all-zero invalid
-     * id (`0000000000000000`) for a root span instead of a null.
+     * matching the LDV spec where `parent_span_id` is optional. The ClickHouse
+     * repository intentionally renders this `null` back to the all-zero invalid id
+     * (`0000000000000000`) on insert, because its column is a non-nullable `String`.
      *
      * @param span the span to map
      * @return the typed row representation

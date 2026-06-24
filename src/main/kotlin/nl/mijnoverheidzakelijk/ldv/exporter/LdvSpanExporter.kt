@@ -3,21 +3,25 @@ package nl.mijnoverheidzakelijk.ldv.exporter
 import io.opentelemetry.sdk.common.CompletableResultCode
 import io.opentelemetry.sdk.trace.data.SpanData
 import io.opentelemetry.sdk.trace.export.SpanExporter
-import nl.mijnoverheidzakelijk.ldv.repository.PostgresRepository
+import nl.mijnoverheidzakelijk.ldv.repository.SpanRepository
 import java.util.logging.Level
 import java.util.logging.Logger
 
 /**
- * OpenTelemetry [SpanExporter] that writes spans to a PostgreSQL table.
+ * The single OpenTelemetry [SpanExporter] for every LDV database backend.
  *
- * PostgreSQL is an alternative backend to ClickHouse, suited to deployments where
- * running PostgreSQL is operationally preferable (ClickHouse is optimised for very
- * high span volumes). The exporter is selected via `logboekdataverwerking.dbms=postgresql`.
- * On construction it ensures the target schema exists and then inserts exported
- * spans in batches.
+ * Spans are mapped to the shared, typed [SpanRow] by [SpanMapper] and handed to
+ * a backend-specific [SpanRepository]; the exporter itself is backend-agnostic.
+ * Selecting or adding a backend is a matter of which [SpanRepository] is injected
+ * (see [nl.mijnoverheidzakelijk.ldv.logboekdataverwerking.ProcessingHandler]),
+ * so the span→row mapping and the lost-record logging live in exactly one place.
+ *
+ * On construction it ensures the target schema exists. A failed export is NOT
+ * retried — no OpenTelemetry span processor re-offers a failed batch — so a
+ * failure logs the lost records' `traceId:spanId` to keep them traceable.
  */
-class PostgresSpanExporter(
-    private val repository: PostgresRepository = PostgresRepository(),
+class LdvSpanExporter(
+    private val repository: SpanRepository,
 ) : SpanExporter {
 
     init {
@@ -25,7 +29,7 @@ class PostgresSpanExporter(
     }
 
     /**
-     * Exports a collection of spans to PostgreSQL.
+     * Exports a collection of spans via the configured [SpanRepository].
      *
      * @param spans the spans to export
      * @return success or failure result code
@@ -39,7 +43,7 @@ class PostgresSpanExporter(
             // an insert failure and list the lost LDV records.
             LOGGER.log(
                 Level.SEVERE,
-                "Failed to map ${spans.size} span(s) for PostgreSQL export; lost spans: ${lostSpanIds(spans)}",
+                "Failed to map ${spans.size} span(s) for export; lost spans: ${lostSpanIds(spans)}",
                 e,
             )
             return CompletableResultCode.ofFailure()
@@ -50,14 +54,14 @@ class PostgresSpanExporter(
         }
 
         return try {
-            repository.insertSpans(rows)
+            repository.insert(rows)
             CompletableResultCode.ofSuccess()
         } catch (e: Exception) {
             // The whole batch is dropped (no retry), so log the count and the
             // trace/span ids of the lost LDV records to keep them traceable.
             LOGGER.log(
                 Level.SEVERE,
-                "Failed to export ${spans.size} span(s) to PostgreSQL; lost spans: ${lostSpanIds(spans)}",
+                "Failed to export ${spans.size} span(s); lost spans: ${lostSpanIds(spans)}",
                 e,
             )
             CompletableResultCode.ofFailure()
@@ -78,21 +82,20 @@ class PostgresSpanExporter(
     override fun flush(): CompletableResultCode = CompletableResultCode.ofSuccess()
 
     /**
-     * Shuts down the exporter and closes the underlying PostgreSQL connection.
+     * Shuts down the exporter and releases the repository's resources.
      *
-     * Returns success unconditionally: a connection-close failure has no recovery
-     * action at shutdown. The repository's `close()` already logs and swallows any
-     * such failure, so it never surfaces here.
-     *
-     * @return success result code
+     * @return success, or failure if closing the repository throws
      */
-    override fun shutdown(): CompletableResultCode {
+    override fun shutdown(): CompletableResultCode = try {
         repository.close()
-        return CompletableResultCode.ofSuccess()
+        CompletableResultCode.ofSuccess()
+    } catch (e: Exception) {
+        LOGGER.log(Level.SEVERE, "Failed to close span repository", e)
+        CompletableResultCode.ofFailure()
     }
 
     companion object {
-        private val LOGGER: Logger = Logger.getLogger(PostgresSpanExporter::class.java.getName())
+        private val LOGGER: Logger = Logger.getLogger(LdvSpanExporter::class.java.getName())
 
         /** Upper bound on how many lost span ids are listed in a single failure log line. */
         private const val MAX_LOGGED_SPAN_IDS = 50

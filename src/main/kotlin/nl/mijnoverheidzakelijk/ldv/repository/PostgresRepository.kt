@@ -41,7 +41,7 @@ class PostgresRepository(
     },
     private val connectionValidationTimeoutSeconds: Int =
         ConfigurationLoader.postgresqlConnectionValidationTimeoutSeconds,
-) {
+) : SpanRepository {
     init {
         requireValidTableName(table)
         require(connectionValidationTimeoutSeconds >= 0) {
@@ -112,7 +112,7 @@ class PostgresRepository(
      * @throws RuntimeException if the DDL operation fails
      */
     @Synchronized
-    fun ensureSchema() {
+    override fun ensureSchema() {
         val conn = connection()
         try {
             conn.createStatement().use { statement ->
@@ -153,7 +153,7 @@ class PostgresRepository(
      * @throws RuntimeException if serialization or the insert fails
      */
     @Synchronized
-    fun insertSpans(spans: List<SpanRow>) {
+    override fun insert(spans: List<SpanRow>) {
         if (spans.isEmpty()) return
 
         val prepared = try {
@@ -208,7 +208,7 @@ class PostgresRepository(
     }
 
     @Synchronized
-    fun close() {
+    override fun close() {
         invalidateConnection()
     }
 

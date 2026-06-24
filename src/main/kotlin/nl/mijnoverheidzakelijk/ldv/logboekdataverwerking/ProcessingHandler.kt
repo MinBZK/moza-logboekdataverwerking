@@ -18,9 +18,11 @@ import jakarta.enterprise.context.ApplicationScoped
 import jakarta.enterprise.inject.Instance
 import jakarta.inject.Inject
 import nl.mijnoverheidzakelijk.ldv.config.ConfigurationLoader
-import nl.mijnoverheidzakelijk.ldv.exporter.ClickHouseSpanExporter
+import nl.mijnoverheidzakelijk.ldv.exporter.LdvSpanExporter
 import nl.mijnoverheidzakelijk.ldv.exporter.LdvSpanFilterProcessor
-import nl.mijnoverheidzakelijk.ldv.exporter.PostgresSpanExporter
+import nl.mijnoverheidzakelijk.ldv.repository.ClickHouseRepository
+import nl.mijnoverheidzakelijk.ldv.repository.PostgresRepository
+import nl.mijnoverheidzakelijk.ldv.repository.SpanRepository
 import org.apache.commons.configuration2.ex.ConfigurationException
 import java.util.logging.Logger
 
@@ -169,18 +171,20 @@ class ProcessingHandler {
                 return SpanProcessor.composite(emptyList())
             }
 
-            // Fail-loud on startup if the selected exporter is misconfigured,
-            // instead of silently dropping spans at first export.
-            val exporter: SpanExporter = when (ConfigurationLoader.dbms) {
+            // Fail-loud on startup if the selected backend is misconfigured,
+            // instead of silently dropping spans at first export. The backend
+            // choice is just which SpanRepository the shared LdvSpanExporter uses.
+            val repository: SpanRepository = when (ConfigurationLoader.dbms) {
                 ConfigurationLoader.Dbms.CLICKHOUSE -> {
                     ConfigurationLoader.validateClickhouseConfig()
-                    ClickHouseSpanExporter()
+                    ClickHouseRepository()
                 }
                 ConfigurationLoader.Dbms.POSTGRESQL -> {
                     ConfigurationLoader.validatePostgresqlConfig()
-                    PostgresSpanExporter()
+                    PostgresRepository()
                 }
             }
+            val exporter: SpanExporter = LdvSpanExporter(repository)
 
             val delegate: SpanProcessor = when (ConfigurationLoader.spanProcessor) {
                 ConfigurationLoader.SpanProcessorMode.SIMPLE -> SimpleSpanProcessor.create(exporter)

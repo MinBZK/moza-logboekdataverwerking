@@ -11,7 +11,7 @@ import io.opentelemetry.api.common.AttributeKey
 import io.opentelemetry.api.trace.StatusCode
 import io.opentelemetry.sdk.common.CompletableResultCode
 import io.opentelemetry.sdk.trace.data.SpanData
-import nl.mijnoverheidzakelijk.ldv.repository.PostgresRepository
+import nl.mijnoverheidzakelijk.ldv.repository.SpanRepository
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -20,10 +20,10 @@ import java.util.logging.Level
 import java.util.logging.LogRecord
 import java.util.logging.Logger
 
-internal class PostgresSpanExporterTest {
+internal class LdvSpanExporterTest {
 
-    private lateinit var mockRepository: PostgresRepository
-    private lateinit var exporter: PostgresSpanExporter
+    private lateinit var mockRepository: SpanRepository
+    private lateinit var exporter: LdvSpanExporter
 
     private val mockTestSpan: SpanData = mockk {
         every { traceId } returns "myTraceId"
@@ -51,7 +51,7 @@ internal class PostgresSpanExporterTest {
     @BeforeEach
     fun setUp() {
         mockRepository = mockk(relaxed = true)
-        exporter = PostgresSpanExporter(mockRepository)
+        exporter = LdvSpanExporter(mockRepository)
     }
 
     @AfterEach
@@ -67,7 +67,7 @@ internal class PostgresSpanExporterTest {
     @Test
     fun `Export with single span inserts mapped row and returns success`() {
         val rows = slot<List<SpanRow>>()
-        every { mockRepository.insertSpans(capture(rows)) } returns Unit
+        every { mockRepository.insert(capture(rows)) } returns Unit
 
         val result = exporter.export(mutableSetOf(mockTestSpan))
 
@@ -88,12 +88,12 @@ internal class PostgresSpanExporterTest {
         val result = exporter.export(mutableSetOf())
 
         assert(CompletableResultCode.ofSuccess() == result)
-        verify(exactly = 0) { mockRepository.insertSpans(any()) }
+        verify(exactly = 0) { mockRepository.insert(any()) }
     }
 
     @Test
     fun `Export with repository exception returns failure`() {
-        every { mockRepository.insertSpans(any()) } throws RuntimeException("Oops")
+        every { mockRepository.insert(any()) } throws RuntimeException("Oops")
 
         val result = exporter.export(mutableSetOf(mockTestSpan))
 
@@ -106,6 +106,15 @@ internal class PostgresSpanExporterTest {
 
         verify { mockRepository.close() }
         assert(CompletableResultCode.ofSuccess() == result)
+    }
+
+    @Test
+    fun `Shutdown returns failure when repository close throws`() {
+        every { mockRepository.close() } throws RuntimeException("close boom")
+
+        val result = exporter.shutdown()
+
+        assert(CompletableResultCode.ofFailure() == result)
     }
 
     @Test
@@ -122,7 +131,7 @@ internal class PostgresSpanExporterTest {
             override fun flush() {}
             override fun close() {}
         }
-        val logger = Logger.getLogger(PostgresSpanExporter::class.java.name)
+        val logger = Logger.getLogger(LdvSpanExporter::class.java.name)
         logger.addHandler(handler)
         try {
             every { SpanMapper.toRow(any()) } throws RuntimeException("mapping bug")
@@ -130,7 +139,7 @@ internal class PostgresSpanExporterTest {
             val result = exporter.export(mutableSetOf(mockTestSpan))
 
             assert(CompletableResultCode.ofFailure() == result)
-            verify(exactly = 0) { mockRepository.insertSpans(any()) }
+            verify(exactly = 0) { mockRepository.insert(any()) }
             val message = records.single { it.level == Level.SEVERE }.message
             assert(message.contains("Failed to map")) // distinct from the insert-failure message
             assert(message.contains("myTraceId:mySpanId"))
@@ -142,14 +151,14 @@ internal class PostgresSpanExporterTest {
 
     @Test
     fun `Failure logs the lost span ids and truncates beyond the cap`() {
-        every { mockRepository.insertSpans(any()) } throws RuntimeException("boom")
+        every { mockRepository.insert(any()) } throws RuntimeException("boom")
         val records = mutableListOf<LogRecord>()
         val handler = object : Handler() {
             override fun publish(record: LogRecord) { records.add(record) }
             override fun flush() {}
             override fun close() {}
         }
-        val logger = Logger.getLogger(PostgresSpanExporter::class.java.name)
+        val logger = Logger.getLogger(LdvSpanExporter::class.java.name)
         logger.addHandler(handler)
         try {
             val spans = (1..60).map { span(tid = "t$it", sid = "s$it") }.toMutableSet()

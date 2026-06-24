@@ -2,7 +2,10 @@ package nl.mijnoverheidzakelijk.ldv.repository
 
 import com.clickhouse.client.api.Client
 import com.clickhouse.data.ClickHouseFormat
+import com.fasterxml.jackson.databind.ObjectMapper
+import io.opentelemetry.api.trace.SpanId
 import nl.mijnoverheidzakelijk.ldv.config.ConfigurationLoader
+import nl.mijnoverheidzakelijk.ldv.exporter.SpanRow
 import org.apache.commons.configuration2.ex.ConfigurationException
 import java.io.ByteArrayInputStream
 import java.io.InputStream
@@ -12,7 +15,9 @@ import java.util.concurrent.TimeUnit
 /**
  * Repository encapsulating basic ClickHouse operations used by the exporter.
  */
-class ClickHouseRepository {
+class ClickHouseRepository(
+    private val objectMapper: ObjectMapper = ObjectMapper(),
+) : SpanRepository {
     private val table: String = ConfigurationLoader.clickhouseTable
     private val client: Client = Client.Builder()
         .addEndpoint(ConfigurationLoader.clickhouseEndpoint)
@@ -32,7 +37,7 @@ class ClickHouseRepository {
      * @throws RuntimeException       if the DDL operation fails
      */
     @Throws(ConfigurationException::class)
-    fun ensureSchema() {
+    override fun ensureSchema() {
         try {
             // Schema matching SpanData structure (camelCase)
             client.query(
@@ -58,6 +63,40 @@ class ClickHouseRepository {
     }
 
     /**
+     * Serializes the rows to a JSONEachRow payload and inserts them.
+     *
+     * The on-the-wire JSON deliberately mirrors the ClickHouse table columns: a
+     * root span's `parentSpanId` is written as the all-zero invalid id (the
+     * ClickHouse column is non-nullable `String`), even though [SpanRow] models
+     * it as `null`. The remaining fields map one-to-one.
+     *
+     * @param rows rows produced by [nl.mijnoverheidzakelijk.ldv.exporter.SpanMapper]
+     * @throws RuntimeException if serialization or the insert fails
+     */
+    override fun insert(rows: List<SpanRow>) {
+        if (rows.isEmpty()) return
+
+        val payload = StringBuilder()
+        for (row in rows) {
+            payload.append(objectMapper.writeValueAsString(toJsonMap(row))).append("\n")
+        }
+        insertJsonEachRow(payload.toString())
+    }
+
+    /** Maps a [SpanRow] to the JSONEachRow object whose keys match the ClickHouse columns. */
+    private fun toJsonMap(row: SpanRow): Map<String, Any> = mapOf(
+        "traceId" to row.traceId,
+        "spanId" to row.spanId,
+        "status" to row.status.name,
+        "name" to row.name,
+        "startTime" to row.startTime,
+        "endTime" to row.endTime,
+        "parentSpanId" to (row.parentSpanId ?: SpanId.getInvalid()),
+        "attributes" to row.attributes,
+        "resource" to row.resource,
+    )
+
+    /**
      * Inserts a JSON payload into the configured table.
      *
      * @param jsonEachRowPayload payload where each line is a JSON object
@@ -72,7 +111,7 @@ class ClickHouseRepository {
         }
     }
 
-    fun close() {
+    override fun close() {
         client.close()
     }
 

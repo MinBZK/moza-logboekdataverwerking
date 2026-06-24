@@ -141,12 +141,12 @@ internal class PostgresRepositoryTest {
     }
 
     @Nested
-    @DisplayName("insertSpans")
+    @DisplayName("insert")
     inner class InsertSpansTests {
 
         @Test
         fun `Binds span fields and commits batch in a transaction`() {
-            repository().insertSpans(listOf(spanRow()))
+            repository().insert(listOf(spanRow()))
 
             verify { mockConnection.prepareStatement(match { it.contains("INSERT INTO spans") && it.contains("?::jsonb") }) }
             verify { mockConnection.autoCommit = false }
@@ -167,7 +167,7 @@ internal class PostgresRepositoryTest {
 
         @Test
         fun `Binds the status enum name`() {
-            repository().insertSpans(listOf(spanRow(status = StatusCode.ERROR)))
+            repository().insert(listOf(spanRow(status = StatusCode.ERROR)))
 
             verify { mockPreparedStatement.setString(3, "ERROR") }
         }
@@ -184,7 +184,7 @@ internal class PostgresRepositoryTest {
             )
 
             val exception = assertThrows<RuntimeException> {
-                repo.insertSpans(listOf(spanRow()))
+                repo.insert(listOf(spanRow()))
             }
             assert(exception.message == "Failed to serialize spans for PostgreSQL")
             verify(exactly = 0) { mockConnection.autoCommit = false }
@@ -197,7 +197,7 @@ internal class PostgresRepositoryTest {
             // reported as an insert failure (that would mislabel committed spans as lost).
             every { mockConnection.autoCommit = true } throws SQLException("restore failed")
 
-            repository().insertSpans(listOf(spanRow()))
+            repository().insert(listOf(spanRow()))
 
             verify { mockConnection.commit() }
             verify { mockConnection.close() } // connection recycled, not reported as failure
@@ -205,7 +205,7 @@ internal class PostgresRepositoryTest {
 
         @Test
         fun `Adds one batch entry per span for a multi-row insert`() {
-            repository().insertSpans(listOf(spanRow(spanId = "a"), spanRow(spanId = "b")))
+            repository().insert(listOf(spanRow(spanId = "a"), spanRow(spanId = "b")))
 
             verify(exactly = 2) { mockPreparedStatement.addBatch() }
             verify(exactly = 1) { mockPreparedStatement.executeBatch() }
@@ -214,7 +214,7 @@ internal class PostgresRepositoryTest {
 
         @Test
         fun `Binds null for a root span without parent`() {
-            repository().insertSpans(listOf(spanRow(parentSpanId = null)))
+            repository().insert(listOf(spanRow(parentSpanId = null)))
 
             verify { mockPreparedStatement.setString(7, null) }
         }
@@ -222,7 +222,7 @@ internal class PostgresRepositoryTest {
         @Test
         fun `Serializes attributes with JSON-significant characters safely`() {
             val tricky = mapOf("key" to """v"with\quote""", "ünïcödé" to "🚀")
-            repository().insertSpans(listOf(spanRow(attributes = tricky)))
+            repository().insert(listOf(spanRow(attributes = tricky)))
 
             val expected = ObjectMapper().writeValueAsString(tricky)
             verify { mockPreparedStatement.setString(8, expected) }
@@ -230,7 +230,7 @@ internal class PostgresRepositoryTest {
 
         @Test
         fun `Does nothing for empty list`() {
-            repository().insertSpans(emptyList())
+            repository().insert(emptyList())
 
             verify(exactly = 0) { mockConnection.prepareStatement(any()) }
         }
@@ -240,7 +240,7 @@ internal class PostgresRepositoryTest {
             every { mockPreparedStatement.executeBatch() } throws SQLException("Insert failed")
 
             val exception = assertThrows<RuntimeException> {
-                repository().insertSpans(listOf(spanRow()))
+                repository().insert(listOf(spanRow()))
             }
             assert(exception.message == "Failed to insert into PostgreSQL")
             verify { mockConnection.rollback() }
@@ -252,7 +252,7 @@ internal class PostgresRepositoryTest {
             every { mockConnection.commit() } throws SQLException("Commit failed")
 
             val exception = assertThrows<RuntimeException> {
-                repository().insertSpans(listOf(spanRow()))
+                repository().insert(listOf(spanRow()))
             }
             assert(exception.message == "Failed to insert into PostgreSQL")
             verify { mockConnection.rollback() }
@@ -264,7 +264,7 @@ internal class PostgresRepositoryTest {
             every { mockConnection.rollback() } throws SQLException("Rollback failed")
 
             val exception = assertThrows<RuntimeException> {
-                repository().insertSpans(listOf(spanRow()))
+                repository().insert(listOf(spanRow()))
             }
             assert(exception.message == "Failed to insert into PostgreSQL")
         }
@@ -299,7 +299,7 @@ internal class PostgresRepositoryTest {
         }
 
         @Test
-        fun `Reconnects via insertSpans when the current connection is stale`() {
+        fun `Reconnects via insert when the current connection is stale`() {
             val stale: Connection = mockk(relaxed = true)
             every { stale.isValid(any()) } returns false
             every { stale.prepareStatement(any()) } returns mockk(relaxed = true)
@@ -316,8 +316,8 @@ internal class PostgresRepositoryTest {
                 connectionValidationTimeoutSeconds = 5,
             )
 
-            repo.insertSpans(listOf(spanRow())) // opens `stale` (first use)
-            repo.insertSpans(listOf(spanRow())) // `stale` is invalid -> reconnect to `fresh`
+            repo.insert(listOf(spanRow())) // opens `stale` (first use)
+            repo.insert(listOf(spanRow())) // `stale` is invalid -> reconnect to `fresh`
 
             verify { stale.close() }
             verify { freshStatement.executeBatch() }
@@ -345,11 +345,11 @@ internal class PostgresRepositoryTest {
             )
 
             // First insert fails: rolls back, closes and drops the broken connection.
-            assertThrows<RuntimeException> { repo.insertSpans(listOf(spanRow())) }
+            assertThrows<RuntimeException> { repo.insert(listOf(spanRow())) }
             verify { broken.close() }
 
             // The exporter must not stay wedged: the next insert reconnects and commits.
-            repo.insertSpans(listOf(spanRow()))
+            repo.insert(listOf(spanRow()))
             verify { freshStatement.executeBatch() }
             verify { fresh.commit() }
         }
