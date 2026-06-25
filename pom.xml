@@ -216,17 +216,16 @@
                    In future JDK versions, this may need to be replaced with static agent loading.
                  - Xshare:off: Disables Class Data Sharing which conflicts with ByteBuddy's
                    bootstrap classpath modifications. CDS is a startup optimization not needed for tests.
-                 - net.bytebuddy.experimental=true: lets ByteBuddy instrument JDK class files whose
-                   bytecode version is newer than the one it officially supports (e.g. running the
-                   tests on a JDK newer than the build's target 21). Without it, inline mocking of
-                   java.base final classes silently fails and the mock falls through to the REAL
-                   method — e.g. a mocked CompletableFuture.get() blocks forever, hanging the suite. -->
+                 Build and test on JDK 21 (the project target). On a JDK newer than ByteBuddy's
+                 supported max, inline mocking of java.base final classes silently fails and the mock
+                 falls through to the REAL method (e.g. CompletableFuture.get() blocks forever and
+                 hangs the suite); use a JDK 21 toolchain rather than -Dnet.bytebuddy.experimental. -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-surefire-plugin</artifactId>
                 <version>3.5.2</version>
                 <configuration>
-                    <argLine>-XX:+EnableDynamicAgentLoading -Xshare:off -Dnet.bytebuddy.experimental=true</argLine>
+                    <argLine>-XX:+EnableDynamicAgentLoading -Xshare:off</argLine>
                 </configuration>
             </plugin>
             <!-- Attach sources and Javadocs as required by Maven Central -->
