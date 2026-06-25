@@ -8,9 +8,12 @@ import io.mockk.clearAllMocks
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.mockkConstructor
+import io.mockk.slot
 import io.mockk.unmockkConstructor
 import io.mockk.verify
+import io.opentelemetry.api.trace.StatusCode
 import nl.mijnoverheidzakelijk.ldv.config.ConfigurationLoader
+import nl.mijnoverheidzakelijk.ldv.exporter.SpanRow
 import org.eclipse.microprofile.config.Config
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
@@ -21,7 +24,10 @@ import org.junit.jupiter.api.assertThrows
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.ValueSource
 import java.io.InputStream
+import java.nio.charset.StandardCharsets
+import java.util.Optional
 import java.util.concurrent.CompletableFuture
+import java.util.concurrent.TimeoutException
 
 internal class ClickHouseRepositoryTest {
 
@@ -40,6 +46,9 @@ internal class ClickHouseRepositoryTest {
         every { mockConfig.getValue("logboekdataverwerking.clickhouse.password", String::class.java) } returns "testpass"
         every { mockConfig.getValue("logboekdataverwerking.clickhouse.database", String::class.java) } returns "testdb"
         every { mockConfig.getValue("logboekdataverwerking.clickhouse.table", String::class.java) } returns "testtable"
+        every {
+            mockConfig.getOptionalValue("logboekdataverwerking.clickhouse.query-timeout-seconds", String::class.java)
+        } returns Optional.empty()
 
         // Mock Client.Builder
         mockClient = mockk(relaxed = true)
@@ -146,6 +155,52 @@ internal class ClickHouseRepositoryTest {
     }
 
     @Nested
+    @DisplayName("queryTimeoutSeconds")
+    inner class QueryTimeoutTests {
+
+        @ParameterizedTest(name = "Rejects non-positive timeout: {0}")
+        @ValueSource(ints = [0, -1])
+        fun `Rejects a non-positive query timeout`(timeout: Int) {
+            val ex = assertThrows<IllegalArgumentException> {
+                ClickHouseRepository(queryTimeoutSeconds = timeout)
+            }
+            assert(ex.message!!.contains("queryTimeoutSeconds"))
+        }
+
+        // A real, never-completing CompletableFuture combined with a 1s query
+        // timeout makes the repository's `.get(timeout, SECONDS)` throw a genuine
+        // TimeoutException. We do NOT mock CompletableFuture.get itself: it is a
+        // final java.base method that mockk cannot reliably intercept, and the
+        // auto-hint recording then calls the REAL blocking get, hanging the suite.
+
+        @Test
+        fun `Wraps a timed-out schema query as a RuntimeException`() {
+            val neverCompletes: CompletableFuture<QueryResponse> = CompletableFuture()
+            every { mockClient.query(any<String>()) } returns neverCompletes
+
+            val repo = ClickHouseRepository(queryTimeoutSeconds = 1)
+            val exception = assertThrows<RuntimeException> {
+                repo.ensureSchema()
+            }
+            assert(exception.message == "Failed to ensure ClickHouse schema")
+            assert(exception.cause is TimeoutException)
+        }
+
+        @Test
+        fun `Wraps a timed-out insert as a RuntimeException`() {
+            val neverCompletes: CompletableFuture<InsertResponse> = CompletableFuture()
+            every { mockClient.insert(any<String>(), any<InputStream>(), any<ClickHouseFormat>()) } returns neverCompletes
+
+            val repo = ClickHouseRepository(queryTimeoutSeconds = 1)
+            val exception = assertThrows<RuntimeException> {
+                repo.insertJsonEachRow("""{"traceId":"123"}""")
+            }
+            assert(exception.message == "Failed to insert into ClickHouse")
+            assert(exception.cause is TimeoutException)
+        }
+    }
+
+    @Nested
     @DisplayName("insertJsonEachRow")
     inner class InsertJsonEachRowTests {
 
@@ -196,6 +251,72 @@ internal class ClickHouseRepositoryTest {
 
             // then - verify insert was called (data conversion happens internally)
             verify { mockClient.insert(any<String>(), any<InputStream>(), any<ClickHouseFormat>()) }
+        }
+    }
+
+    @Nested
+    @DisplayName("insert(rows)")
+    inner class InsertRowsTests {
+
+        private fun spanRow(parentSpanId: String?) = SpanRow(
+            traceId = "myTraceId",
+            spanId = "mySpanId",
+            status = StatusCode.OK,
+            name = "myName",
+            startTimeMillis = 0L,
+            endTimeMillis = 0L,
+            parentSpanId = parentSpanId,
+            attributes = mapOf("attrKey" to "attrValue"),
+            resource = mapOf("resKey" to "resValue"),
+        )
+
+        private fun capturedPayload(rows: List<SpanRow>): String {
+            val captured = slot<InputStream>()
+            every {
+                mockClient.insert(any<String>(), capture(captured), any<ClickHouseFormat>())
+            } returns CompletableFuture.completedFuture(mockk())
+
+            repository.insert(rows)
+
+            return captured.captured.readBytes().toString(StandardCharsets.UTF_8)
+        }
+
+        @Test
+        fun `Renders a root span row as JSONEachRow with the all-zero parentSpanId`() {
+            // A root span's parentSpanId is null in SpanRow but the ClickHouse column
+            // is a non-nullable String, so it must serialize to the all-zero invalid id.
+            val payload = capturedPayload(listOf(spanRow(parentSpanId = null)))
+
+            assert(
+                payload == "{\"traceId\":\"myTraceId\",\"spanId\":\"mySpanId\",\"status\":\"OK\"," +
+                    "\"name\":\"myName\",\"startTime\":0,\"endTime\":0," +
+                    "\"parentSpanId\":\"0000000000000000\"," +
+                    "\"attributes\":{\"attrKey\":\"attrValue\"}," +
+                    "\"resource\":{\"resKey\":\"resValue\"}}\n",
+            )
+        }
+
+        @Test
+        fun `Preserves a non-root parentSpanId`() {
+            val payload = capturedPayload(listOf(spanRow(parentSpanId = "myParentSpanId")))
+
+            assert(payload.contains("\"parentSpanId\":\"myParentSpanId\""))
+        }
+
+        @Test
+        fun `Serializes one JSON object per row, newline-separated`() {
+            val payload = capturedPayload(listOf(spanRow(parentSpanId = null), spanRow(parentSpanId = null)))
+
+            assert(payload.trimEnd('\n').split("\n").size == 2)
+        }
+
+        @Test
+        fun `Empty rows does not call the client`() {
+            repository.insert(emptyList())
+
+            verify(exactly = 0) {
+                mockClient.insert(any<String>(), any<InputStream>(), any<ClickHouseFormat>())
+            }
         }
     }
 }

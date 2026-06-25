@@ -15,7 +15,7 @@ Dit Open Source project is opgezet om de LDV standaard eenvoudig aan nieuwe of b
 
 ## Afhankelijkheden
 
-- **Clickhouse database** - Deze implementatie is gemaakt met een Clickhouse database voor het opslaan van de logging: https://clickhouse.com/
+- **Clickhouse of PostgreSQL database** - Voor het opslaan van de logging wordt standaard ClickHouse gebruikt: https://clickhouse.com/. ClickHouse is geoptimaliseerd voor zeer grote volumes. Organisaties die liever PostgreSQL beheren, kunnen dat als backend kiezen via `logboekdataverwerking.dbms=postgresql` (zie hieronder).
 - **Verwerkingsactiviteiten register** - Bij het loggen van de activiteit wordt verwezen naar een ID van een verwerkingsactiviteit in een activiteiten register. Meer informatie hierover is te vinden in de documentatie van de standaard. Hierbij wordt geen richtlijn opgegeven voor de technische implementatie en deze is daarom niet inbegrepen bij deze implementatie.
 
 ## Hoe te gebruiken
@@ -25,11 +25,9 @@ Om deze package te gebruiken moet je in je (maven) project de volgende variablen
 ```properties
 logboekdataverwerking.enabled=true
 logboekdataverwerking.service-name=service-name
-logboekdataverwerking.clickhouse.endpoint=http://localhost:8123
-logboekdataverwerking.clickhouse.username=user
-logboekdataverwerking.clickhouse.password=password
-logboekdataverwerking.clickhouse.database=db_name
-logboekdataverwerking.clickhouse.table=table_name
+
+# Database backend: 'clickhouse' (standaard) of 'postgresql'.
+logboekdataverwerking.dbms=clickhouse
 
 # Optionele OpenTelemetry resource-attributen
 # Worden alleen toegevoegd aan de standalone OpenTelemetry resource;
@@ -42,7 +40,30 @@ logboekdataverwerking.deployment-environment=production
 logboekdataverwerking.span-processor=batch
 ```
 
-of `application.yml`:
+Configureer daarnaast **alleen de backend die je bij `dbms` koos** — niet beide. Bij `dbms=clickhouse`:
+
+```properties
+logboekdataverwerking.clickhouse.endpoint=http://localhost:8123
+logboekdataverwerking.clickhouse.username=user
+logboekdataverwerking.clickhouse.password=password
+logboekdataverwerking.clickhouse.database=db_name
+logboekdataverwerking.clickhouse.table=table_name
+# Optioneel: time-out (seconden) voor ClickHouse-queries en -inserts. Standaard 30.
+logboekdataverwerking.clickhouse.query-timeout-seconds=30
+```
+
+Of, bij `dbms=postgresql`:
+
+```properties
+logboekdataverwerking.postgresql.url=jdbc:postgresql://localhost:5432/ldv_logging
+logboekdataverwerking.postgresql.username=user
+logboekdataverwerking.postgresql.password=password
+logboekdataverwerking.postgresql.table=spans
+# Optioneel: time-out (seconden) voor het controleren of de verbinding nog actief is. Standaard 5.
+logboekdataverwerking.postgresql.connection-validation-timeout-seconds=5
+```
+
+of `application.yml` (hier met `dbms: clickhouse`; vervang het `clickhouse`-blok door een `postgresql`-blok bij `dbms: postgresql`):
 
 ```yaml
 logboekdataverwerking:
@@ -51,15 +72,30 @@ logboekdataverwerking:
     service-version: 1.0.0
     deployment-environment: production
     span-processor: batch
+    dbms: clickhouse
     clickhouse:
         endpoint: http://localhost:8123
         username: user
         password: password
         database: db_name
         table: table_name
+        query-timeout-seconds: 30
 ```
 
-Als `enabled=true` is, valideert de library bij applicatiestart dat alle `clickhouse.*` properties aanwezig en niet-leeg zijn. Ontbrekende of lege waarden geven een `IllegalStateException` met een lijst van de missende keys, in plaats van pas bij de eerste export te falen.
+Als `enabled=true` is, valideert de library bij applicatiestart dat alle properties van de gekozen backend aanwezig en niet-leeg zijn (`clickhouse.*` bij `dbms=clickhouse`, `postgresql.*` bij `dbms=postgresql`). Ontbrekende of lege waarden geven een `IllegalStateException` met een lijst van de missende keys, in plaats van pas bij de eerste export te falen.
+
+PostgreSQL is een alternatieve backend voor ClickHouse, bruikbaar waar PostgreSQL operationeel beter past. De `attributes`- en `resource`-velden worden opgeslagen als `jsonb`-kolommen.
+
+De JDBC-drivers van beide backends zijn in deze library als `optional` gemarkeerd: ze komen niet transitief mee, zodat je applicatie alléén de driver van de gekozen backend hoeft te declareren (`com.clickhouse:client-v2` óf `org.postgresql:postgresql`). Kies je een backend zonder de bijbehorende driver, dan faalt de applicatie luid bij start (zie de config-validatie hierboven).
+
+De lokale databases draaien achter een Compose-profiel, zodat je alleen de gekozen backend start:
+
+```bash
+docker compose --profile clickhouse up -d    # standaard backend
+docker compose --profile postgresql up -d    # alternatieve backend
+```
+
+> **Let op (geldt voor beide backends):** Bij een mislukte export worden de betreffende spans niet opnieuw aangeboden — geen enkele OpenTelemetry-spanprocessor (`batch` of `simple`) probeert een mislukte export opnieuw. Met de standaard `batch`-processor weet de applicatie bovendien niet óf de opslag is geslaagd. Voor een verwerkingenlogboek dat aan de LDV-acknowledgement-eis voldoet: gebruik `span-processor=simple`, zodat de applicatie synchroon ziet of de logregel is opgeslagen. Dat garandeert geen opslag bij een databasestoring, maar maakt een mislukking wél direct zichtbaar.
 
 Hierna kun je endpoints voorzien van de `@Logboek()` annotatie:
 

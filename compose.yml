@@ -1,9 +1,28 @@
+# Each backend sits behind a Compose profile so you start only the one you use,
+# mirroring the runtime dbms selection and the <optional> JDBC drivers in pom.xml:
+#   docker compose --profile clickhouse up -d     # default backend
+#   docker compose --profile postgresql up -d     # alternative backend
+# Naming a service explicitly (e.g. `up -d postgresql`) also starts it regardless
+# of the active profile. Plain `up` with no profile starts nothing by design.
 services:
   clickhouse:
     image: clickhouse/clickhouse-server:25.3
+    profiles: ["clickhouse"]
     ports:
     - "8123:8123"
     environment:
       CLICKHOUSE_USER: "user"
       CLICKHOUSE_PASSWORD: "password"
       CLICKHOUSE_DB: "ldv_logging"
+
+  # Alternative production-capable backend.
+  # Use logboekdataverwerking.dbms=postgresql to target this backend.
+  postgresql:
+    image: postgres:17
+    profiles: ["postgresql"]
+    ports:
+    - "5432:5432"
+    environment:
+      POSTGRES_USER: "user"
+      POSTGRES_PASSWORD: "password"
+      POSTGRES_DB: "ldv_logging"
