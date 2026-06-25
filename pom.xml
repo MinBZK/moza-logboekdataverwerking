@@ -40,7 +40,8 @@
         <maven.compiler.source>21</maven.compiler.source>
         <maven.compiler.target>21</maven.compiler.target>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <kotlin.version>2.4.0</kotlin.version>
+        <!-- 2.3.20, not 2.4.x: CodeQL doesn't support Kotlin 2.4 yet (github/codeql#21938) -->
+        <kotlin.version>2.3.20</kotlin.version>
     </properties>
 
     <pluginRepositories>
