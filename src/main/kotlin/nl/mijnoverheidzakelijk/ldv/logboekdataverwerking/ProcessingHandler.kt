@@ -13,42 +13,31 @@ import io.opentelemetry.sdk.trace.SpanProcessor
 import io.opentelemetry.sdk.trace.export.BatchSpanProcessor
 import io.opentelemetry.sdk.trace.export.SimpleSpanProcessor
 import io.opentelemetry.sdk.trace.export.SpanExporter
+import io.opentelemetry.sdk.trace.samplers.Sampler
 import jakarta.annotation.PostConstruct
 import jakarta.enterprise.context.ApplicationScoped
-import jakarta.enterprise.inject.Instance
-import jakarta.inject.Inject
 import nl.mijnoverheidzakelijk.ldv.config.ConfigurationLoader
 import nl.mijnoverheidzakelijk.ldv.exporter.ClickHouseSpanExporter
 import nl.mijnoverheidzakelijk.ldv.exporter.LdvSpanFilterProcessor
+import nl.mijnoverheidzakelijk.ldv.exporter.LogboekWriteFailureRecorder
 import org.apache.commons.configuration2.ex.ConfigurationException
 import java.util.logging.Logger
 
 /**
- * Handles creation and enrichment of OpenTelemetry spans used by the Logboek
- * interceptor flow.
+ * Creates and enriches the OpenTelemetry spans used by the Logboek interceptor flow.
  *
- * When running inside a CDI container that provides an [OpenTelemetry] bean
- * (e.g. Quarkus with its OpenTelemetry extension), that instance is used
- * directly. Otherwise, a standalone SDK instance is created and managed
- * by this handler.
+ * Uses a dedicated SDK rather than a host-provided one (e.g. quarkus-opentelemetry):
+ * the host's sampler would otherwise be able to drop logregels, which the LDV spec
+ * forbids (MUST NOT use Log Sampling). See [initOpenTelemetry].
  */
 @ApplicationScoped
 class ProcessingHandler {
 
-    @Inject
-    private lateinit var openTelemetryInstance: Instance<OpenTelemetry>
-
-    private lateinit var openTelemetry: OpenTelemetry
+    internal lateinit var openTelemetry: OpenTelemetry
 
     @PostConstruct
     fun init() {
-        openTelemetry = if (openTelemetryInstance.isResolvable) {
-            LOGGER.info("Using container-provided OpenTelemetry instance")
-            openTelemetryInstance.get()
-        } else {
-            LOGGER.info("No container-provided OpenTelemetry found, creating standalone instance")
-            initOpenTelemetry()
-        }
+        openTelemetry = initOpenTelemetry()
     }
 
     /**
@@ -88,47 +77,93 @@ class ProcessingHandler {
     @JvmOverloads
     fun addLogboekContextToSpan(span: Span, logboekContext: LogboekContext, setStatus: Boolean = true) {
         val processingActivityId = logboekContext.processingActivityId
-        val dataSubjectId = logboekContext.dataSubjectId
-        val dataSubjectType = logboekContext.dataSubjectType
-
         require(!processingActivityId.isNullOrEmpty()) { "dpl.core.processing_activity_id is required by the LDV standard" }
-        require(!dataSubjectId.isNullOrEmpty()) { "dpl.core.data_subject_id is required by the LDV standard" }
-        require(!dataSubjectType.isNullOrEmpty()) { "dpl.core.data_subject_id_type is required by the LDV standard" }
+        validateActivityUri(processingActivityId)
 
+        // The LDV standard makes data_subject_id/_type optional (0..1); MOZa deliberately
+        // requires at least one betrokkene (stricter than the spec, by design).
+        val subjects = logboekContext.effectiveSubjects()
+        require(subjects.isNotEmpty()) { "dpl.core.data_subject_id is required by the LDV standard" }
+        subjects.forEach {
+            require(it.id.isNotEmpty()) { "dpl.core.data_subject_id is required by the LDV standard" }
+            require(it.type.isNotEmpty()) { "dpl.core.data_subject_id_type is required by the LDV standard" }
+        }
+
+        span.setAttribute("dpl.core.processing_activity_id", processingActivityId)
+        if (setStatus) {
+            span.setStatus(logboekContext.status)
+        }
+
+        if (subjects.size == 1) {
+            applySubject(span, subjects[0])
+        } else {
+            // LDV requires a separate logregel per betrokkene; the action span stays
+            // subject-less and each betrokkene becomes a child span.
+            val parentContext = Context.root().with(span)
+            val childName = logboekContext.actionName?.takeIf { it.isNotEmpty() } ?: CHILD_SPAN_NAME
+            subjects.forEach { subject ->
+                val child = startSpan(childName, parentContext)
+                child.setAttribute("dpl.core.processing_activity_id", processingActivityId)
+                applySubject(child, subject)
+                if (setStatus) {
+                    child.setStatus(logboekContext.status)
+                }
+                child.end()
+            }
+        }
+    }
+
+    private fun applySubject(span: Span, subject: DataSubject) {
+        span.setAttribute("dpl.core.data_subject_id", subject.id)
+        span.setAttribute("dpl.core.data_subject_id_type", subject.type)
+    }
+
+    private fun validateActivityUri(processingActivityId: String) {
         try {
             val uri = java.net.URI(processingActivityId)
             require(uri.isAbsolute) { "dpl.core.processing_activity_id must be an absolute URI: $processingActivityId" }
         } catch (e: java.net.URISyntaxException) {
             throw IllegalArgumentException("dpl.core.processing_activity_id must be a valid URI: $processingActivityId", e)
         }
+    }
 
-        span.setAttribute("dpl.core.processing_activity_id", processingActivityId)
-        span.setAttribute("dpl.core.data_subject_id", dataSubjectId)
-        span.setAttribute("dpl.core.data_subject_id_type", dataSubjectType)
-        if (setStatus) {
-            span.setStatus(logboekContext.status)
+    /**
+     * Always consumes the recorded write failure so none lingers on a pooled thread.
+     * When [throwOnFailure] and policy is `FAIL_CLOSED`, rethrows it so a verwerking
+     * does not count as logged when its logregel was not stored.
+     */
+    @JvmOverloads
+    fun enforceWriteAcknowledgement(throwOnFailure: Boolean = true) {
+        val failure = LogboekWriteFailureRecorder.consume() ?: return
+        if (throwOnFailure && ConfigurationLoader.writeFailurePolicy == ConfigurationLoader.WriteFailurePolicy.FAIL_CLOSED) {
+            throw LogboekWriteException("Logregel kon niet in het Logboek worden opgeslagen", failure)
         }
     }
 
     companion object {
         private val LOGGER: Logger = Logger.getLogger(ProcessingHandler::class.java.name)
 
+        /** Name for per-betrokkene logregels when the action carries no human-readable name. */
+        internal const val CHILD_SPAN_NAME: String = "verwerking-betrokkene"
+
         val serviceName: String by lazy { ConfigurationLoader.serviceName }
 
         /**
-         * Creates a standalone [OpenTelemetry] instance for use outside a CDI container.
+         * [Sampler.alwaysOn] so an inbound `traceparent` sampled-flag of `0` cannot drop
+         * logregels (LDV MUST NOT sample). Not registered globally, so it coexists with a
+         * host-provided OpenTelemetry.
          *
-         * @return the initialized [OpenTelemetry] instance
          * @throws ConfigurationException if exporter configuration cannot be read
          */
         @Throws(ConfigurationException::class)
         internal fun initOpenTelemetry(): OpenTelemetry {
-            LOGGER.info("Initializing standalone OpenTelemetry for service: $serviceName")
+            LOGGER.info("Initializing LDV OpenTelemetry for service: $serviceName")
 
             val resource = Resource.getDefault().merge(Resource.create(buildResourceAttributes()))
 
             val tracerProvider = SdkTracerProvider.builder()
                 .setResource(resource)
+                .setSampler(Sampler.alwaysOn())
                 .addSpanProcessor(buildLdvSpanProcessor())
                 .build()
 
@@ -145,24 +180,13 @@ class ProcessingHandler {
          * Builds the LDV span-export pipeline. When LDV is enabled: the ClickHouse
          * exporter wrapped in the configured [SpanProcessor], then wrapped in
          * [LdvSpanFilterProcessor] so only LDV spans are exported. When disabled it
-         * returns a no-op processor, so the package contributes nothing to a host's
-         * SDK (no exporter, no worker thread, no per-span filtering).
-         *
-         * Shared by the standalone SDK path ([initOpenTelemetry]) and the CDI
-         * producer ([LdvSpanProcessorProducer]) so that fail-loud config
-         * validation and export behaviour are identical whether or not the host
-         * app provides its own OpenTelemetry (e.g. quarkus-opentelemetry). This
-         * method never creates an OpenTelemetry SDK, so it cannot introduce a
-         * second instance.
+         * returns a no-op processor, so the dedicated SDK does no work.
          *
          * @throws IllegalStateException if `enabled` but ClickHouse config is incomplete
          */
         internal fun buildLdvSpanProcessor(): SpanProcessor {
             if (!ConfigurationLoader.enabled) {
-                // Disabled: contribute nothing. This matters when the jar sits on a
-                // host's classpath alongside an OTel integration that collects
-                // SpanProcessor beans (e.g. quarkus-opentelemetry): with LDV off we
-                // must not attach a processor (or its worker thread) to the host SDK.
+                // Disabled: contribute nothing (no exporter, no worker thread).
                 return SpanProcessor.composite(emptyList())
             }
 

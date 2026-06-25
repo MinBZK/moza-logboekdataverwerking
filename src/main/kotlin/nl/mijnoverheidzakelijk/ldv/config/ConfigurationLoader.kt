@@ -14,6 +14,9 @@ object ConfigurationLoader {
     /** Allowed values for the span-processor configuration property. */
     enum class SpanProcessorMode { BATCH, SIMPLE }
 
+    /** Allowed values for the write-failure-policy configuration property. */
+    enum class WriteFailurePolicy { FAIL_CLOSED, FAIL_OPEN }
+
     /**
      * Provider for the MicroProfile [Config] instance.
      * Can be replaced in tests to provide mock configuration.
@@ -48,14 +51,13 @@ object ConfigurationLoader {
         get() = getOptionalString("logboekdataverwerking.deployment-environment")
 
     /**
-     * Span processor selection. `BATCH` (default) is asynchronous and high-throughput;
-     * `SIMPLE` is synchronous and waits for the exporter to acknowledge each span,
-     * matching the LDV spec's MUST that the application knows the log record was
-     * stored. See README for the trade-off.
+     * `SIMPLE` (default) exports synchronously so the application knows the logregel was
+     * stored (LDV acknowledgement MUST, and the precondition for [writeFailurePolicy]).
+     * `BATCH` is async and cannot enforce per-request acknowledgement. See README.
      */
     val spanProcessor: SpanProcessorMode
         get() {
-            val raw = getOptionalString("logboekdataverwerking.span-processor") ?: return SpanProcessorMode.BATCH
+            val raw = getOptionalString("logboekdataverwerking.span-processor") ?: return SpanProcessorMode.SIMPLE
             return when (raw.lowercase()) {
                 "simple" -> SpanProcessorMode.SIMPLE
                 "batch" -> SpanProcessorMode.BATCH
@@ -64,6 +66,31 @@ object ConfigurationLoader {
                 )
             }
         }
+
+    /**
+     * `FAIL_CLOSED` (default) fails the verwerking when its logregel was not stored
+     * (strict acknowledgement MUST); `FAIL_OPEN` logs and continues. Only enforced on
+     * the synchronous [SpanProcessorMode.SIMPLE] path. See README.
+     */
+    val writeFailurePolicy: WriteFailurePolicy
+        get() {
+            val raw = getOptionalString("logboekdataverwerking.write-failure-policy")
+                ?: return WriteFailurePolicy.FAIL_CLOSED
+            return when (raw.lowercase()) {
+                "fail-closed", "fail_closed", "failclosed" -> WriteFailurePolicy.FAIL_CLOSED
+                "fail-open", "fail_open", "failopen" -> WriteFailurePolicy.FAIL_OPEN
+                else -> throw IllegalArgumentException(
+                    "logboekdataverwerking.write-failure-policy must be 'fail-closed' or 'fail-open', got: $raw"
+                )
+            }
+        }
+
+    /**
+     * Default `false`: stacktraces kunnen persoonsgegevens bevatten, dus standaard
+     * opslaan conflicteert met dataminimalisatie (AVG art. 5(1)(c)).
+     */
+    val logExceptionStacktrace: Boolean
+        get() = getOptionalString("logboekdataverwerking.log-exception-stacktrace")?.toBooleanStrictOrNull() ?: false
 
     /** The ClickHouse server endpoint URL. */
     val clickhouseEndpoint: String

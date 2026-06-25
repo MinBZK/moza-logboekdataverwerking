@@ -23,6 +23,7 @@ import org.junit.jupiter.api.TestInstance
 import org.junit.jupiter.api.assertThrows
 import java.lang.reflect.Field
 import java.lang.reflect.Method
+import java.util.Optional
 
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 internal class LogboekInterceptorTest {
@@ -77,6 +78,12 @@ internal class LogboekInterceptorTest {
         every { mockSpan.makeCurrent() } returns mockScope
         every { mockHeaders.requestHeaders } returns MultivaluedHashMap()
         every { mockHeaders.getHeaderString(any()) } returns null
+
+        // Re-stub each test: clearAllMocks() in tearDown wipes it, and the interceptor
+        // reads this on the exception path. Default off.
+        every {
+            mockConfig.getOptionalValue("logboekdataverwerking.log-exception-stacktrace", String::class.java)
+        } returns Optional.empty()
     }
 
     @AfterEach
@@ -216,6 +223,55 @@ internal class LogboekInterceptorTest {
             assert(thrown === expectedException) { "Expected the original exception to be rethrown" }
             assert(thrown.message == "Test exception message") { "Exception message should be preserved" }
             verify { mockSpan.end() }
+        }
+
+        @Test
+        fun `Success path enforces write acknowledgement (throwing) after ending span`() {
+            // given
+            val mockMethod = getAnnotatedMethod()
+            every { mockInvocationContext.method } returns mockMethod
+            every { mockInvocationContext.proceed() } returns "result"
+
+            // when
+            interceptor.log(mockInvocationContext)
+
+            // then
+            verify { mockSpan.end() }
+            verify { mockHandler.enforceWriteAcknowledgement(throwOnFailure = true) }
+        }
+
+        @Test
+        fun `Exception path records type and message but enforces without throwing`() {
+            // given
+            val mockMethod = getAnnotatedMethod()
+            every { mockInvocationContext.method } returns mockMethod
+            every { mockInvocationContext.proceed() } throws IllegalStateException("boom")
+
+            // when / then
+            assertThrows<IllegalStateException> { interceptor.log(mockInvocationContext) }
+
+            verify { mockSpan.setAttribute("exception.type", "java.lang.IllegalStateException") }
+            verify { mockSpan.setAttribute("exception.message", "boom") }
+            // throwOnFailure=false so a write failure cannot mask the business exception.
+            verify { mockHandler.enforceWriteAcknowledgement(throwOnFailure = false) }
+            // Stacktrace off by default (dataminimalisatie).
+            verify(inverse = true) { mockSpan.setAttribute("exception.stacktrace", any<String>()) }
+        }
+
+        @Test
+        fun `Stacktrace is recorded only when explicitly enabled`() {
+            // given
+            every {
+                mockConfig.getOptionalValue("logboekdataverwerking.log-exception-stacktrace", String::class.java)
+            } returns Optional.of("true")
+            val mockMethod = getAnnotatedMethod()
+            every { mockInvocationContext.method } returns mockMethod
+            every { mockInvocationContext.proceed() } throws IllegalStateException("boom")
+
+            // when / then
+            assertThrows<IllegalStateException> { interceptor.log(mockInvocationContext) }
+
+            verify { mockSpan.setAttribute("exception.stacktrace", any<String>()) }
         }
 
         @Test

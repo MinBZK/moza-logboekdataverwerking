@@ -10,9 +10,10 @@ import io.opentelemetry.api.trace.SpanBuilder
 import io.opentelemetry.api.trace.StatusCode
 import io.opentelemetry.api.trace.Tracer
 import io.opentelemetry.context.Context
-import jakarta.enterprise.inject.Instance
 import nl.mijnoverheidzakelijk.ldv.config.ConfigurationLoader
 import nl.mijnoverheidzakelijk.ldv.exporter.LdvSpanFilterProcessor
+import nl.mijnoverheidzakelijk.ldv.exporter.LogboekWriteFailureRecorder
+import java.util.Optional
 import org.eclipse.microprofile.config.Config
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeAll
@@ -59,17 +60,12 @@ internal class ProcessingHandlerTest {
         every { mockSpanBuilder.startSpan() } returns mockSpan
         every { mockSpanBuilder.setParent(any<Context>()) } returns mockSpanBuilder
 
-        // Mock CDI Instance to provide the mock OpenTelemetry
-        val mockInstance = mockk<Instance<OpenTelemetry>>()
-        every { mockInstance.isResolvable } returns true
-        every { mockInstance.get() } returns mockOpenTelemetry
-
-        // Create handler and inject mock via reflection
+        // Inject the mock OpenTelemetry directly; LDV always uses its own dedicated SDK,
+        // so unit tests bypass init() (which would build a real SDK) and set the field.
         handler = ProcessingHandler()
-        val field = ProcessingHandler::class.java.getDeclaredField("openTelemetryInstance")
+        val field = ProcessingHandler::class.java.getDeclaredField("openTelemetry")
         field.isAccessible = true
-        field.set(handler, mockInstance)
-        handler.init()
+        field.set(handler, mockOpenTelemetry)
     }
 
     @AfterEach
@@ -279,6 +275,88 @@ internal class ProcessingHandlerTest {
             verify { mockSpan.setAttribute("dpl.core.data_subject_id_type", "BSN") }
             verify(inverse = true) { mockSpan.setStatus(any<StatusCode>()) }
             verify(inverse = true) { mockSpan.setStatus(any<StatusCode>(), any<String>()) }
+        }
+
+        @Test
+        fun `Emits a separate child logregel per betrokkene when multiple subjects`() {
+            // given
+            val logboekContext = LogboekContext().apply {
+                processingActivityId = "https://register.example.org/activiteiten/activity-123"
+                addSubject("subject-1", "BSN")
+                addSubject("subject-2", "KVK")
+                status = StatusCode.OK
+            }
+
+            // when
+            handler.addLogboekContextToSpan(mockSpan, logboekContext)
+
+            // then: one child span per betrokkene (action name absent here -> fallback name)
+            verify(exactly = 2) { mockTracer.spanBuilder("verwerking-betrokkene") }
+            verify { mockSpan.setAttribute("dpl.core.data_subject_id", "subject-1") }
+            verify { mockSpan.setAttribute("dpl.core.data_subject_id_type", "BSN") }
+            verify { mockSpan.setAttribute("dpl.core.data_subject_id", "subject-2") }
+            verify { mockSpan.setAttribute("dpl.core.data_subject_id_type", "KVK") }
+        }
+
+        @Test
+        fun `Throws when no betrokkene is present at all`() {
+            val logboekContext = LogboekContext().apply {
+                processingActivityId = "https://register.example.org/activiteiten/activity-123"
+            }
+
+            assertThrows<IllegalArgumentException> {
+                handler.addLogboekContextToSpan(mockSpan, logboekContext)
+            }
+        }
+    }
+
+    @Nested
+    @DisplayName("enforceWriteAcknowledgement")
+    inner class EnforceWriteAcknowledgementTests {
+
+        @AfterEach
+        fun clearRecorder() = LogboekWriteFailureRecorder.clear()
+
+        @Test
+        fun `Throws LogboekWriteException when write failed and policy is fail-closed`() {
+            every {
+                mockConfig.getOptionalValue("logboekdataverwerking.write-failure-policy", String::class.java)
+            } returns Optional.of("fail-closed")
+            LogboekWriteFailureRecorder.record(RuntimeException("clickhouse down"))
+
+            assertThrows<LogboekWriteException> { handler.enforceWriteAcknowledgement() }
+        }
+
+        @Test
+        fun `Does not throw when write failed but policy is fail-open`() {
+            every {
+                mockConfig.getOptionalValue("logboekdataverwerking.write-failure-policy", String::class.java)
+            } returns Optional.of("fail-open")
+            LogboekWriteFailureRecorder.record(RuntimeException("clickhouse down"))
+
+            handler.enforceWriteAcknowledgement()
+        }
+
+        @Test
+        fun `Does not throw when no write failure was recorded`() {
+            every {
+                mockConfig.getOptionalValue("logboekdataverwerking.write-failure-policy", String::class.java)
+            } returns Optional.of("fail-closed")
+
+            handler.enforceWriteAcknowledgement()
+        }
+
+        @Test
+        fun `Consumes the failure without throwing when throwOnFailure is false`() {
+            every {
+                mockConfig.getOptionalValue("logboekdataverwerking.write-failure-policy", String::class.java)
+            } returns Optional.of("fail-closed")
+            LogboekWriteFailureRecorder.record(RuntimeException("clickhouse down"))
+
+            handler.enforceWriteAcknowledgement(throwOnFailure = false)
+
+            // The failure was consumed, so a later check finds nothing to throw.
+            handler.enforceWriteAcknowledgement(throwOnFailure = true)
         }
     }
 }

@@ -53,6 +53,8 @@ class ClickHouseSpanExporter (
             }
         } catch (e: Exception) {
             LOGGER.log(Level.SEVERE, "Failed to insert spans into ClickHouse", e)
+            // Relay to the request thread so a fail-closed verwerking can surface it.
+            LogboekWriteFailureRecorder.record(e)
             return CompletableResultCode.ofFailure()
         }
 

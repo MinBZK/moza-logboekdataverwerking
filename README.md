@@ -37,9 +37,13 @@ logboekdataverwerking.clickhouse.table=table_name
 logboekdataverwerking.service-version=1.0.0
 logboekdataverwerking.deployment-environment=production
 
-# Span processor: 'batch' (standaard) of 'simple'.
+# Span processor: 'simple' (standaard) of 'batch'.
 # Zie 'Span processor en acknowledgement' hieronder voor de trade-off.
-logboekdataverwerking.span-processor=batch
+logboekdataverwerking.span-processor=simple
+
+# Wat te doen als het Logboek een schrijfactie weigert: 'fail-closed' (standaard) of 'fail-open'.
+# Zie 'Span processor en acknowledgement' hieronder.
+logboekdataverwerking.write-failure-policy=fail-closed
 ```
 
 of `application.yml`:
@@ -50,7 +54,8 @@ logboekdataverwerking:
     service-name: service-name
     service-version: 1.0.0
     deployment-environment: production
-    span-processor: batch
+    span-processor: simple
+    write-failure-policy: fail-closed
     clickhouse:
         endpoint: http://localhost:8123
         username: user
@@ -176,9 +181,28 @@ Het LDV-attribuut `dpl.core.foreign_operation.processor` identificeert de andere
 
 ### Span processor en acknowledgement
 
-De LDV-standaard stelt dat de applicatie moet kunnen weten dat een logregel daadwerkelijk is opgeslagen. Met OpenTelemetry zijn er twee gangbare processors:
+De LDV-standaard stelt dat de applicatie moet kunnen weten dat een logregel daadwerkelijk is opgeslagen. Dit wordt bepaald door twee instellingen die samenwerken.
 
-- **`batch`** (standaard): `BatchSpanProcessor`. Spans worden asynchroon in batches geëxporteerd. Hoogste throughput, laagste request-latency, maar de applicatie keert terug naar de aanroeper voordat de export bevestigd is. Bij een JVM-crash tussen response en flush kan een logregel verloren gaan.
-- **`simple`**: `SimpleSpanProcessor`. Elke span wordt synchroon geëxporteerd; de applicatie wacht op de bevestiging van ClickHouse voordat de request afrondt. Strikter conform de spec, maar verhoogt p99-latency en koppelt request-doorlooptijd aan de beschikbaarheid van het Logboek.
+**`span-processor`** kiest de OpenTelemetry-processor:
 
-Kies bewust per omgeving. Voor een initiële implementatie volstaat `batch`; overweeg `simple` zodra het Logboek productiekritisch en hoog-beschikbaar is.
+- **`simple`** (standaard): `SimpleSpanProcessor`. Elke span wordt synchroon geëxporteerd; de applicatie wacht op de bevestiging van ClickHouse voordat de request afrondt. Conform de acknowledgement-MUST, maar verhoogt p99-latency en koppelt request-doorlooptijd aan de beschikbaarheid van het Logboek.
+- **`batch`**: `BatchSpanProcessor`. Spans worden asynchroon in batches geëxporteerd. Hoogste throughput, laagste request-latency, maar de applicatie keert terug naar de aanroeper voordat de export bevestigd is. Bij een JVM-crash tussen response en flush kan een logregel verloren gaan. Onder `batch` kan de acknowledgement niet per request worden afgedwongen (zie hieronder).
+
+**`write-failure-policy`** bepaalt wat er gebeurt als ClickHouse een schrijfactie weigert:
+
+- **`fail-closed`** (standaard): bij een schrijffout gooit de interceptor een `LogboekWriteException`, zodat een verwerking niet als afgerond-en-gelogd geldt terwijl de logregel niet is opgeslagen. Dit is de strikte lezing van de acknowledgement-MUST en koppelt het slagen van een verwerking aan de beschikbaarheid van het Logboek.
+- **`fail-open`**: de schrijffout wordt gelogd (SEVERE) en de verwerking gaat door.
+
+Afdwingen van `fail-closed` werkt alleen op de synchrone `simple`-processor: daar draait de export op dezelfde thread als de request, vlak voor het einde van de verwerking. Onder `batch` gebeurt de export op een achtergrond-thread en degradeert het beleid tot log-only. De standaardcombinatie `simple` + `fail-closed` is daarmee conform de standaard; wijk hier alleen bewust van af.
+
+### Foutdetails en dataminimalisatie
+
+Error-logregels krijgen altijd `exception.type` en `exception.message`. De volledige `exception.stacktrace` wordt alleen opgeslagen als `logboekdataverwerking.log-exception-stacktrace=true`; standaard staat dit uit, omdat stacktraces groot zijn en persoonsgegevens kunnen bevatten (dataminimalisatie, AVG art. 5(1)(c)).
+
+### Sampling
+
+LDV-spans gebruiken altijd een eigen, toegewijde OpenTelemetry-SDK met een `AlwaysOn`-sampler, ook wanneer de host-applicatie zelf een OpenTelemetry-SDK levert (bijv. `quarkus-opentelemetry`). Dit voorkomt dat logregels worden weggesampled door de sampler van de host of door een inkomende `traceparent` met sampled-flag `0`, wat in strijd zou zijn met de LDV-eis dat Log Sampling niet is toegestaan. De toegewijde SDK wordt niet globaal geregistreerd en bestaat naast een eventuele host-SDK; tracecontext blijft propageren omdat de W3C-propagator en OTel-`Context` SDK-onafhankelijk zijn.
+
+### Meerdere betrokkenen
+
+De standaard vereist een aparte logregel per betrokkene. Voor het enkelvoudige geval zet je `dataSubjectId`/`dataSubjectType` op de `LogboekContext`. Verwerk je meerdere betrokkenen in één actie (bijv. een batch), gebruik dan `logboekContext.addSubject(id, type)` per betrokkene: de interceptor maakt dan één child-logregel per betrokkene onder de actie-span, met hetzelfde `trace_id`.

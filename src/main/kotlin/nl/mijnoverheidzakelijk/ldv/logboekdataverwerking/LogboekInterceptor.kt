@@ -3,6 +3,8 @@ package nl.mijnoverheidzakelijk.ldv.logboekdataverwerking
 import io.opentelemetry.api.trace.StatusCode
 import io.opentelemetry.api.trace.propagation.W3CTraceContextPropagator
 import io.opentelemetry.context.propagation.TextMapGetter
+import nl.mijnoverheidzakelijk.ldv.config.ConfigurationLoader
+import nl.mijnoverheidzakelijk.ldv.exporter.LogboekWriteFailureRecorder
 
 import jakarta.inject.Inject
 import jakarta.interceptor.AroundInvoke
@@ -58,6 +60,10 @@ class LogboekInterceptor {
         require(name.isNotEmpty()) { "Span name is required by the LDV standard" }
         val processingActivityId = annotation.processingActivityId
 
+        // Drop any write failure left on this (pooled) thread by an earlier request, so
+        // the fail-closed check below only ever reacts to this verwerking's own writes.
+        LogboekWriteFailureRecorder.clear()
+
         val span = handler.startSpan(name, traceContext)
         var caughtException = false
 
@@ -68,13 +74,23 @@ class LogboekInterceptor {
         } catch (e: Exception) {
             caughtException = true
             span.setStatus(StatusCode.ERROR, e.message ?: "")
+            span.setAttribute("exception.type", e.javaClass.name)
+            e.message?.let { span.setAttribute("exception.message", it) }
+            // Stacktraces are large and can embed persoonsgegevens; only store on opt-in.
+            if (ConfigurationLoader.logExceptionStacktrace) {
+                span.setAttribute("exception.stacktrace", e.stackTraceToString())
+            }
             throw e
         } finally {
             logboekContext.processingActivityId = processingActivityId
+            logboekContext.actionName = name
             // On the exception path ERROR is already set; skip re-applying status. An
             // optimistic OK would override it (OTel precedence: Ok > Error) and drop the error.
             handler.addLogboekContextToSpan(span, logboekContext, setStatus = !caughtException)
             span.end()
+            // throwOnFailure=false on the exception path: a write failure must not mask
+            // the business exception that is already propagating.
+            handler.enforceWriteAcknowledgement(throwOnFailure = !caughtException)
         }
     }
 
