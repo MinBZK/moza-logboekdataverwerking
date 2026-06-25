@@ -29,23 +29,6 @@ logboekdataverwerking.service-name=service-name
 # Database backend: 'clickhouse' (standaard) of 'postgresql'.
 logboekdataverwerking.dbms=clickhouse
 
-# ClickHouse (gebruikt wanneer dbms=clickhouse)
-logboekdataverwerking.clickhouse.endpoint=http://localhost:8123
-logboekdataverwerking.clickhouse.username=user
-logboekdataverwerking.clickhouse.password=password
-logboekdataverwerking.clickhouse.database=db_name
-logboekdataverwerking.clickhouse.table=table_name
-# Optioneel: time-out (seconden) voor ClickHouse-queries en -inserts. Standaard 30.
-logboekdataverwerking.clickhouse.query-timeout-seconds=30
-
-# PostgreSQL (gebruikt wanneer dbms=postgresql) - alternatieve backend
-logboekdataverwerking.postgresql.url=jdbc:postgresql://localhost:5432/ldv_logging
-logboekdataverwerking.postgresql.username=user
-logboekdataverwerking.postgresql.password=password
-logboekdataverwerking.postgresql.table=spans
-# Optioneel: time-out (seconden) voor het controleren of de verbinding nog actief is. Standaard 5.
-logboekdataverwerking.postgresql.connection-validation-timeout-seconds=5
-
 # Optionele OpenTelemetry resource-attributen
 # Worden alleen toegevoegd aan de standalone OpenTelemetry resource;
 # in een Quarkus-container met quarkus-opentelemetry komen deze uit de Quarkus-config.
@@ -57,7 +40,30 @@ logboekdataverwerking.deployment-environment=production
 logboekdataverwerking.span-processor=batch
 ```
 
-of `application.yml`:
+Configureer daarnaast **alleen de backend die je bij `dbms` koos** — niet beide. Bij `dbms=clickhouse`:
+
+```properties
+logboekdataverwerking.clickhouse.endpoint=http://localhost:8123
+logboekdataverwerking.clickhouse.username=user
+logboekdataverwerking.clickhouse.password=password
+logboekdataverwerking.clickhouse.database=db_name
+logboekdataverwerking.clickhouse.table=table_name
+# Optioneel: time-out (seconden) voor ClickHouse-queries en -inserts. Standaard 30.
+logboekdataverwerking.clickhouse.query-timeout-seconds=30
+```
+
+Of, bij `dbms=postgresql`:
+
+```properties
+logboekdataverwerking.postgresql.url=jdbc:postgresql://localhost:5432/ldv_logging
+logboekdataverwerking.postgresql.username=user
+logboekdataverwerking.postgresql.password=password
+logboekdataverwerking.postgresql.table=spans
+# Optioneel: time-out (seconden) voor het controleren of de verbinding nog actief is. Standaard 5.
+logboekdataverwerking.postgresql.connection-validation-timeout-seconds=5
+```
+
+of `application.yml` (hier met `dbms: clickhouse`; vervang het `clickhouse`-blok door een `postgresql`-blok bij `dbms: postgresql`):
 
 ```yaml
 logboekdataverwerking:
@@ -74,12 +80,6 @@ logboekdataverwerking:
         database: db_name
         table: table_name
         query-timeout-seconds: 30
-    postgresql:
-        url: jdbc:postgresql://localhost:5432/ldv_logging
-        username: user
-        password: password
-        table: spans
-        connection-validation-timeout-seconds: 5
 ```
 
 Als `enabled=true` is, valideert de library bij applicatiestart dat alle properties van de gekozen backend aanwezig en niet-leeg zijn (`clickhouse.*` bij `dbms=clickhouse`, `postgresql.*` bij `dbms=postgresql`). Ontbrekende of lege waarden geven een `IllegalStateException` met een lijst van de missende keys, in plaats van pas bij de eerste export te falen.
