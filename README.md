@@ -95,7 +95,7 @@ docker compose --profile clickhouse up -d    # standaard backend
 docker compose --profile postgresql up -d    # alternatieve backend
 ```
 
-> **Let op (geldt voor beide backends):** Bij een mislukte export worden de betreffende spans niet opnieuw aangeboden — geen enkele OpenTelemetry-spanprocessor (`batch` of `simple`) probeert een mislukte export opnieuw. Met de standaard `batch`-processor weet de applicatie bovendien niet óf de opslag is geslaagd. Voor een verwerkingenlogboek dat aan de LDV-acknowledgement-eis voldoet: gebruik `span-processor=simple`, zodat de applicatie synchroon ziet of de logregel is opgeslagen. Dat garandeert geen opslag bij een databasestoring, maar maakt een mislukking wél direct zichtbaar. Kies tussen ClickHouse en PostgreSQL op basis van volume en operationele voorkeur: ClickHouse is geoptimaliseerd voor zeer grote volumes, PostgreSQL is voor veel organisaties eenvoudiger te beheren.
+> **Let op (geldt voor beide backends):** Bij een mislukte export worden de betreffende spans niet opnieuw aangeboden — geen enkele OpenTelemetry-spanprocessor (`batch` of `simple`) probeert een mislukte export opnieuw. Met de standaard `batch`-processor weet de applicatie bovendien niet óf de opslag is geslaagd. Voor een verwerkingenlogboek dat aan de LDV-acknowledgement-eis voldoet: gebruik `span-processor=simple`, zodat de applicatie synchroon ziet of de logregel is opgeslagen. Dat garandeert geen opslag bij een databasestoring, maar maakt een mislukking wél direct zichtbaar.
 
 Hierna kun je endpoints voorzien van de `@Logboek()` annotatie:
 
