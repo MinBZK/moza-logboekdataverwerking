@@ -244,6 +244,235 @@ internal class ConfigurationLoaderTest {
     }
 
     @Nested
+    @DisplayName("Dbms selection")
+    inner class DbmsTests {
+
+        @Test
+        fun `defaults to CLICKHOUSE when key absent`() {
+            every {
+                mockConfig.getOptionalValue("logboekdataverwerking.dbms", String::class.java)
+            } returns Optional.empty()
+
+            assert(ConfigurationLoader.dbms == ConfigurationLoader.Dbms.CLICKHOUSE)
+        }
+
+        @Test
+        fun `parses clickhouse case-insensitively`() {
+            every {
+                mockConfig.getOptionalValue("logboekdataverwerking.dbms", String::class.java)
+            } returns Optional.of("ClickHouse")
+
+            assert(ConfigurationLoader.dbms == ConfigurationLoader.Dbms.CLICKHOUSE)
+        }
+
+        @Test
+        fun `parses postgresql`() {
+            every {
+                mockConfig.getOptionalValue("logboekdataverwerking.dbms", String::class.java)
+            } returns Optional.of("postgresql")
+
+            assert(ConfigurationLoader.dbms == ConfigurationLoader.Dbms.POSTGRESQL)
+        }
+
+        @Test
+        fun `parses postgres alias`() {
+            every {
+                mockConfig.getOptionalValue("logboekdataverwerking.dbms", String::class.java)
+            } returns Optional.of("postgres")
+
+            assert(ConfigurationLoader.dbms == ConfigurationLoader.Dbms.POSTGRESQL)
+        }
+
+        @Test
+        fun `throws on unrecognised value`() {
+            every {
+                mockConfig.getOptionalValue("logboekdataverwerking.dbms", String::class.java)
+            } returns Optional.of("mysql")
+
+            assertThrows<IllegalArgumentException> { ConfigurationLoader.dbms }
+        }
+    }
+
+    @Nested
+    @DisplayName("postgresqlConnectionValidationTimeoutSeconds")
+    inner class PostgresqlConnectionValidationTimeoutTests {
+
+        @Test
+        fun `defaults when key absent`() {
+            every {
+                mockConfig.getOptionalValue("logboekdataverwerking.postgresql.connection-validation-timeout-seconds", String::class.java)
+            } returns Optional.empty()
+
+            assert(
+                ConfigurationLoader.postgresqlConnectionValidationTimeoutSeconds ==
+                    ConfigurationLoader.DEFAULT_POSTGRESQL_CONNECTION_VALIDATION_TIMEOUT_SECONDS
+            )
+        }
+
+        @Test
+        fun `defaults when value blank`() {
+            every {
+                mockConfig.getOptionalValue("logboekdataverwerking.postgresql.connection-validation-timeout-seconds", String::class.java)
+            } returns Optional.of("  ")
+
+            assert(
+                ConfigurationLoader.postgresqlConnectionValidationTimeoutSeconds ==
+                    ConfigurationLoader.DEFAULT_POSTGRESQL_CONNECTION_VALIDATION_TIMEOUT_SECONDS
+            )
+        }
+
+        @Test
+        fun `returns configured value`() {
+            every {
+                mockConfig.getOptionalValue("logboekdataverwerking.postgresql.connection-validation-timeout-seconds", String::class.java)
+            } returns Optional.of("12")
+
+            assert(ConfigurationLoader.postgresqlConnectionValidationTimeoutSeconds == 12)
+        }
+
+        @Test
+        fun `throws a contextual error on non-numeric value`() {
+            every {
+                mockConfig.getOptionalValue("logboekdataverwerking.postgresql.connection-validation-timeout-seconds", String::class.java)
+            } returns Optional.of("soon")
+
+            val ex = assertThrows<IllegalArgumentException> {
+                ConfigurationLoader.postgresqlConnectionValidationTimeoutSeconds
+            }
+            assert(ex.message!!.contains("connection-validation-timeout-seconds"))
+        }
+    }
+
+    @Nested
+    @DisplayName("clickhouseQueryTimeoutSeconds")
+    inner class ClickhouseQueryTimeoutTests {
+
+        @Test
+        fun `defaults when key absent`() {
+            every {
+                mockConfig.getOptionalValue("logboekdataverwerking.clickhouse.query-timeout-seconds", String::class.java)
+            } returns Optional.empty()
+
+            assert(
+                ConfigurationLoader.clickhouseQueryTimeoutSeconds ==
+                    ConfigurationLoader.DEFAULT_CLICKHOUSE_QUERY_TIMEOUT_SECONDS
+            )
+        }
+
+        @Test
+        fun `defaults when value blank`() {
+            every {
+                mockConfig.getOptionalValue("logboekdataverwerking.clickhouse.query-timeout-seconds", String::class.java)
+            } returns Optional.of("  ")
+
+            assert(
+                ConfigurationLoader.clickhouseQueryTimeoutSeconds ==
+                    ConfigurationLoader.DEFAULT_CLICKHOUSE_QUERY_TIMEOUT_SECONDS
+            )
+        }
+
+        @Test
+        fun `returns configured value`() {
+            every {
+                mockConfig.getOptionalValue("logboekdataverwerking.clickhouse.query-timeout-seconds", String::class.java)
+            } returns Optional.of("45")
+
+            assert(ConfigurationLoader.clickhouseQueryTimeoutSeconds == 45)
+        }
+
+        @Test
+        fun `throws a contextual error on non-numeric value`() {
+            every {
+                mockConfig.getOptionalValue("logboekdataverwerking.clickhouse.query-timeout-seconds", String::class.java)
+            } returns Optional.of("soon")
+
+            val ex = assertThrows<IllegalArgumentException> {
+                ConfigurationLoader.clickhouseQueryTimeoutSeconds
+            }
+            assert(ex.message!!.contains("query-timeout-seconds"))
+        }
+    }
+
+    @Nested
+    @DisplayName("validatePostgresqlConfig")
+    inner class ValidatePostgresqlConfigTests {
+
+        private fun stubPostgresql(
+            url: String? = "jdbc:postgresql://localhost:5432/ldv_logging",
+            username: String? = "user",
+            password: String? = "pwd",
+            table: String? = "spans",
+            timeout: String? = null,
+        ) {
+            mapOf(
+                "logboekdataverwerking.postgresql.url" to url,
+                "logboekdataverwerking.postgresql.username" to username,
+                "logboekdataverwerking.postgresql.password" to password,
+                "logboekdataverwerking.postgresql.table" to table,
+            ).forEach { (key, value) ->
+                if (value == null) {
+                    every {
+                        mockConfig.getValue(key, String::class.java)
+                    } throws NoSuchElementException("missing: $key")
+                } else {
+                    every {
+                        mockConfig.getValue(key, String::class.java)
+                    } returns value
+                }
+            }
+            every {
+                mockConfig.getOptionalValue("logboekdataverwerking.postgresql.connection-validation-timeout-seconds", String::class.java)
+            } returns Optional.ofNullable(timeout)
+        }
+
+        @Test
+        fun `passes when all keys are set and non-blank`() {
+            stubPostgresql()
+            ConfigurationLoader.validatePostgresqlConfig()
+        }
+
+        @Test
+        fun `throws when a key is missing`() {
+            stubPostgresql(url = null)
+
+            val ex = assertThrows<IllegalStateException> {
+                ConfigurationLoader.validatePostgresqlConfig()
+            }
+            assert(ex.message!!.contains("logboekdataverwerking.postgresql.url"))
+        }
+
+        @Test
+        fun `throws when a key is blank`() {
+            stubPostgresql(table = "   ")
+
+            val ex = assertThrows<IllegalStateException> {
+                ConfigurationLoader.validatePostgresqlConfig()
+            }
+            assert(ex.message!!.contains("logboekdataverwerking.postgresql.table"))
+        }
+
+        @Test
+        fun `throws when the connection-validation timeout is not an integer`() {
+            stubPostgresql(timeout = "soon")
+
+            val ex = assertThrows<IllegalArgumentException> {
+                ConfigurationLoader.validatePostgresqlConfig()
+            }
+            assert(ex.message!!.contains("connection-validation-timeout-seconds"))
+        }
+
+        @Test
+        fun `throws when the connection-validation timeout is negative`() {
+            stubPostgresql(timeout = "-1")
+
+            val ex = assertThrows<IllegalArgumentException> {
+                ConfigurationLoader.validatePostgresqlConfig()
+            }
+            assert(ex.message!!.contains("connection-validation-timeout-seconds"))
+        }
+    }
+
+    @Nested
     @DisplayName("validateClickhouseConfig")
     inner class ValidateClickhouseConfigTests {
 

@@ -115,6 +115,70 @@ internal class ProcessingHandlerTest {
     }
 
     @Nested
+    @DisplayName("buildLdvSpanProcessor")
+    inner class BuildLdvSpanProcessorTests {
+
+        private lateinit var cfg: Config
+
+        @BeforeEach
+        fun setUpConfig() {
+            cfg = mockk()
+            ConfigurationLoader.configProvider = { cfg }
+        }
+
+        @AfterEach
+        fun restoreConfig() {
+            ConfigurationLoader.configProvider = { mockConfig }
+        }
+
+        @Test
+        fun `disabled returns a no-op processor without reading backend config`() {
+            every { cfg.getValue("logboekdataverwerking.enabled", Boolean::class.java) } returns false
+
+            // Should not throw and should not require any backend config keys.
+            ProcessingHandler.buildLdvSpanProcessor()
+        }
+
+        @Test
+        fun `postgresql backend validates postgresql config and fails loud when incomplete`() {
+            every { cfg.getValue("logboekdataverwerking.enabled", Boolean::class.java) } returns true
+            every { cfg.getOptionalValue("logboekdataverwerking.dbms", String::class.java) } returns Optional.of("postgresql")
+            every {
+                cfg.getValue(match<String> { it.startsWith("logboekdataverwerking.postgresql.") }, String::class.java)
+            } throws NoSuchElementException("missing")
+
+            val ex = assertThrows<IllegalStateException> {
+                ProcessingHandler.buildLdvSpanProcessor()
+            }
+            assert(ex.message!!.contains("logboekdataverwerking.postgresql."))
+        }
+
+        @Test
+        fun `default clickhouse backend validates clickhouse config and fails loud when incomplete`() {
+            every { cfg.getValue("logboekdataverwerking.enabled", Boolean::class.java) } returns true
+            every { cfg.getOptionalValue("logboekdataverwerking.dbms", String::class.java) } returns Optional.empty()
+            every {
+                cfg.getValue(match<String> { it.startsWith("logboekdataverwerking.clickhouse.") }, String::class.java)
+            } throws NoSuchElementException("missing")
+
+            val ex = assertThrows<IllegalStateException> {
+                ProcessingHandler.buildLdvSpanProcessor()
+            }
+            assert(ex.message!!.contains("logboekdataverwerking.clickhouse."))
+        }
+
+        @Test
+        fun `unsupported dbms value fails loud`() {
+            every { cfg.getValue("logboekdataverwerking.enabled", Boolean::class.java) } returns true
+            every { cfg.getOptionalValue("logboekdataverwerking.dbms", String::class.java) } returns Optional.of("mysql")
+
+            assertThrows<IllegalArgumentException> {
+                ProcessingHandler.buildLdvSpanProcessor()
+            }
+        }
+    }
+
+    @Nested
     @DisplayName("addLogboekContextToSpan")
     inner class AddLogboekContextToSpanTests {
 

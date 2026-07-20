@@ -6,7 +6,7 @@
 
     <groupId>nl.mijnoverheidzakelijk.ldv</groupId>
     <artifactId>logboekdataverwerking-wrapper</artifactId>
-    <version>1.3.0-SNAPSHOT</version>
+    <version>1.4.0-SNAPSHOT</version>
 
     <name>Logboek Dataverwerkingen Clickhouse</name>
     <description>JVM utilities to integrate the Logboek Dataverwerkingen (LDV) standard using a Clickhouse DB by Logius.</description>
@@ -64,10 +64,27 @@
     </dependencyManagement>
 
     <dependencies>
+        <!-- Database drivers are <optional>: this library is compiled and tested
+             against both backends, but a consuming application only runs one. Marking
+             them optional keeps both off the consumer's transitive classpath, so each
+             app declares just the driver for the backend it selects via
+             logboekdataverwerking.dbms (clickhouse|postgresql). The backend is chosen
+             at runtime, so the unused driver is never loaded. A consumer that selects a
+             backend without declaring its driver fails loud at startup (see
+             ConfigurationLoader.validate*Config). -->
         <dependency>
             <groupId>com.clickhouse</groupId>
             <artifactId>client-v2</artifactId>
             <version>0.9.6</version>
+            <optional>true</optional>
+        </dependency>
+        <!-- PostgreSQL JDBC driver: alternative production-capable backend.
+             Selected via logboekdataverwerking.dbms=postgresql. -->
+        <dependency>
+            <groupId>org.postgresql</groupId>
+            <artifactId>postgresql</artifactId>
+            <version>42.7.7</version>
+            <optional>true</optional>
         </dependency>
         <dependency>
             <groupId>io.opentelemetry</groupId>
@@ -199,7 +216,11 @@
                    constructors at runtime. JDK 21+ warns about dynamic agent loading.
                    In future JDK versions, this may need to be replaced with static agent loading.
                  - Xshare:off: Disables Class Data Sharing which conflicts with ByteBuddy's
-                   bootstrap classpath modifications. CDS is a startup optimization not needed for tests. -->
+                   bootstrap classpath modifications. CDS is a startup optimization not needed for tests.
+                 Build and test on JDK 21 (the project target). On a JDK newer than ByteBuddy's
+                 supported max, inline mocking of java.base final classes silently fails and the mock
+                 falls through to the REAL method (e.g. CompletableFuture.get() blocks forever and
+                 hangs the suite); use a JDK 21 toolchain rather than -Dnet.bytebuddy.experimental. -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-surefire-plugin</artifactId>

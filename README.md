@@ -15,7 +15,7 @@ Dit Open Source project is opgezet om de LDV standaard eenvoudig aan nieuwe of b
 
 ## Afhankelijkheden
 
-- **Clickhouse database** - Deze implementatie is gemaakt met een Clickhouse database voor het opslaan van de logging: https://clickhouse.com/
+- **Clickhouse of PostgreSQL database** - Voor het opslaan van de logging wordt standaard ClickHouse gebruikt: https://clickhouse.com/. ClickHouse is geoptimaliseerd voor zeer grote volumes. Organisaties die liever PostgreSQL beheren, kunnen dat als backend kiezen via `logboekdataverwerking.dbms=postgresql` (zie hieronder).
 - **Verwerkingsactiviteiten register** - Bij het loggen van de activiteit wordt verwezen naar een ID van een verwerkingsactiviteit in een activiteiten register. Meer informatie hierover is te vinden in de documentatie van de standaard. Hierbij wordt geen richtlijn opgegeven voor de technische implementatie en deze is daarom niet inbegrepen bij deze implementatie.
 
 ## Hoe te gebruiken
@@ -25,11 +25,9 @@ Om deze package te gebruiken moet je in je (maven) project de volgende variablen
 ```properties
 logboekdataverwerking.enabled=true
 logboekdataverwerking.service-name=service-name
-logboekdataverwerking.clickhouse.endpoint=http://localhost:8123
-logboekdataverwerking.clickhouse.username=user
-logboekdataverwerking.clickhouse.password=password
-logboekdataverwerking.clickhouse.database=db_name
-logboekdataverwerking.clickhouse.table=table_name
+
+# Database backend: 'clickhouse' (standaard) of 'postgresql'.
+logboekdataverwerking.dbms=clickhouse
 
 # Optionele OpenTelemetry resource-attributen
 # Worden alleen toegevoegd aan de standalone OpenTelemetry resource;
@@ -37,7 +35,7 @@ logboekdataverwerking.clickhouse.table=table_name
 logboekdataverwerking.service-version=1.0.0
 logboekdataverwerking.deployment-environment=production
 
-# Span processor: 'simple' (standaard) of 'batch'.
+# Span processor: 'simple' (standaard, aanbevolen) of 'batch' (afgeraden, niet conform de acknowledgement-MUST).
 # Zie 'Span processor en acknowledgement' hieronder voor de trade-off.
 logboekdataverwerking.span-processor=simple
 
@@ -46,7 +44,30 @@ logboekdataverwerking.span-processor=simple
 logboekdataverwerking.write-failure-policy=fail-closed
 ```
 
-of `application.yml`:
+Configureer daarnaast **alleen de backend die je bij `dbms` koos** — niet beide. Bij `dbms=clickhouse`:
+
+```properties
+logboekdataverwerking.clickhouse.endpoint=http://localhost:8123
+logboekdataverwerking.clickhouse.username=user
+logboekdataverwerking.clickhouse.password=password
+logboekdataverwerking.clickhouse.database=db_name
+logboekdataverwerking.clickhouse.table=table_name
+# Optioneel: time-out (seconden) voor ClickHouse-queries en -inserts. Standaard 30.
+logboekdataverwerking.clickhouse.query-timeout-seconds=30
+```
+
+Of, bij `dbms=postgresql`:
+
+```properties
+logboekdataverwerking.postgresql.url=jdbc:postgresql://localhost:5432/ldv_logging
+logboekdataverwerking.postgresql.username=user
+logboekdataverwerking.postgresql.password=password
+logboekdataverwerking.postgresql.table=spans
+# Optioneel: time-out (seconden) voor het controleren of de verbinding nog actief is. Standaard 5.
+logboekdataverwerking.postgresql.connection-validation-timeout-seconds=5
+```
+
+of `application.yml` (hier met `dbms: clickhouse`; vervang het `clickhouse`-blok door een `postgresql`-blok bij `dbms: postgresql`):
 
 ```yaml
 logboekdataverwerking:
@@ -56,15 +77,30 @@ logboekdataverwerking:
     deployment-environment: production
     span-processor: simple
     write-failure-policy: fail-closed
+    dbms: clickhouse
     clickhouse:
         endpoint: http://localhost:8123
         username: user
         password: password
         database: db_name
         table: table_name
+        query-timeout-seconds: 30
 ```
 
-Als `enabled=true` is, valideert de library bij applicatiestart dat alle `clickhouse.*` properties aanwezig en niet-leeg zijn. Ontbrekende of lege waarden geven een `IllegalStateException` met een lijst van de missende keys, in plaats van pas bij de eerste export te falen.
+Als `enabled=true` is, valideert de library bij applicatiestart dat alle properties van de gekozen backend aanwezig en niet-leeg zijn (`clickhouse.*` bij `dbms=clickhouse`, `postgresql.*` bij `dbms=postgresql`). Ontbrekende of lege waarden geven een `IllegalStateException` met een lijst van de missende keys, in plaats van pas bij de eerste export te falen.
+
+PostgreSQL is een alternatieve backend voor ClickHouse, bruikbaar waar PostgreSQL operationeel beter past. De `attributes`- en `resource`-velden worden opgeslagen als `jsonb`-kolommen.
+
+De JDBC-drivers van beide backends zijn in deze library als `optional` gemarkeerd: ze komen niet transitief mee, zodat je applicatie alléén de driver van de gekozen backend hoeft te declareren (`com.clickhouse:client-v2` óf `org.postgresql:postgresql`). Kies je een backend zonder de bijbehorende driver, dan faalt de applicatie luid bij start (zie de config-validatie hierboven).
+
+De lokale databases draaien achter een Compose-profiel, zodat je alleen de gekozen backend start:
+
+```bash
+docker compose --profile clickhouse up -d    # standaard backend
+docker compose --profile postgresql up -d    # alternatieve backend
+```
+
+> **Let op (geldt voor beide backends):** Bij een mislukte export worden de betreffende spans niet opnieuw aangeboden — geen enkele OpenTelemetry-spanprocessor (`batch` of `simple`) probeert een mislukte export opnieuw. De standaardcombinatie `span-processor=simple` + `write-failure-policy=fail-closed` voldoet aan de LDV-acknowledgement-eis: de applicatie ziet synchroon of de logregel is opgeslagen en laat de verwerking falen als dat niet zo is. Dat garandeert geen opslag bij een databasestoring, maar maakt een mislukking wél direct zichtbaar. Zet je `span-processor=batch`, dan weet de applicatie niet óf de opslag is geslaagd en degradeert `fail-closed` tot log-only.
 
 Hierna kun je endpoints voorzien van de `@Logboek()` annotatie:
 
@@ -185,15 +221,19 @@ De LDV-standaard stelt dat de applicatie moet kunnen weten dat een logregel daad
 
 **`span-processor`** kiest de OpenTelemetry-processor:
 
-- **`simple`** (standaard): `SimpleSpanProcessor`. Elke span wordt synchroon geëxporteerd; de applicatie wacht op de bevestiging van ClickHouse voordat de request afrondt. Conform de acknowledgement-MUST, maar verhoogt p99-latency en koppelt request-doorlooptijd aan de beschikbaarheid van het Logboek.
-- **`batch`**: `BatchSpanProcessor`. Spans worden asynchroon in batches geëxporteerd. Hoogste throughput, laagste request-latency, maar de applicatie keert terug naar de aanroeper voordat de export bevestigd is. Bij een JVM-crash tussen response en flush kan een logregel verloren gaan. Onder `batch` kan de acknowledgement niet per request worden afgedwongen (zie hieronder).
+- **`simple`** (standaard, en de aanbevolen keuze): `SimpleSpanProcessor`. Elke span wordt synchroon geëxporteerd; de applicatie wacht op de bevestiging van de database voordat de request afrondt. Conform de acknowledgement-MUST, maar verhoogt p99-latency en koppelt request-doorlooptijd aan de beschikbaarheid van het Logboek.
+- **`batch`** (afgeraden): `BatchSpanProcessor`. Spans worden asynchroon in batches geëxporteerd. De applicatie keert terug naar de aanroeper vóórdat de export bevestigd is, dus **`batch` voldoet niet aan de acknowledgement-MUST**: bij een JVM-crash tussen response en flush gaat de logregel stil verloren, en `fail-closed` degradeert tot log-only.
 
-**`write-failure-policy`** bepaalt wat er gebeurt als ClickHouse een schrijfactie weigert:
+Kies je tóch `batch`, doe dat dan als bewuste, gedocumenteerde afweging. De situaties die dat rechtvaardigen zijn een hoog verwerkingsvolume of acties met veel betrokkenen: de standaard vereist een aparte logregel per betrokkene, dus onder `simple` doet een verwerking met N betrokkenen N+1 synchrone inserts binnen de request. Bij ClickHouse telt daarbij dat de engine op grote, gebundelde inserts is ontworpen; veel kleine losse inserts leggen merge-druk op de MergeTree-tabel.
+
+**`write-failure-policy`** bepaalt wat er gebeurt als de database een schrijfactie weigert:
 
 - **`fail-closed`** (standaard): bij een schrijffout gooit de interceptor een `LogboekWriteException`, zodat een verwerking niet als afgerond-en-gelogd geldt terwijl de logregel niet is opgeslagen. Dit is de strikte lezing van de acknowledgement-MUST en koppelt het slagen van een verwerking aan de beschikbaarheid van het Logboek.
 - **`fail-open`**: de schrijffout wordt gelogd (SEVERE) en de verwerking gaat door.
 
-Afdwingen van `fail-closed` werkt alleen op de synchrone `simple`-processor: daar draait de export op dezelfde thread als de request, vlak voor het einde van de verwerking. Onder `batch` gebeurt de export op een achtergrond-thread en degradeert het beleid tot log-only. De standaardcombinatie `simple` + `fail-closed` is daarmee conform de standaard; wijk hier alleen bewust van af.
+Afdwingen van `fail-closed` werkt alleen op de synchrone `simple`-processor: daar draait de export op dezelfde thread als de request, vlak voor het einde van de verwerking. Onder `batch` gebeurt de export op een achtergrond-thread en degradeert het beleid tot log-only. Alleen de standaardcombinatie `simple` + `fail-closed` voldoet aan de acknowledgement-MUST.
+
+Gaat een export mis, dan wordt zo veel mogelijk gered: het mappen van een span naar een databaserij gebeurt per span, dus één onverwerkbare span laat de rest van de batch niet sneuvelen. De insert zelf is wél alles-of-niets — een half weggeschreven batch is een niet te interpreteren logregel. In beide gevallen levert verlies een mislukte export op (dus `fail-closed` slaat aan) en worden de `trace_id:span_id` van de verloren logregels op SEVERE gelogd.
 
 ### Foutdetails en dataminimalisatie
 
@@ -205,4 +245,4 @@ LDV-spans gebruiken altijd een eigen, toegewijde OpenTelemetry-SDK met een `Alwa
 
 ### Meerdere betrokkenen
 
-De standaard vereist een aparte logregel per betrokkene. Voor het enkelvoudige geval zet je `dataSubjectId`/`dataSubjectType` op de `LogboekContext`. Verwerk je meerdere betrokkenen in één actie (bijv. een batch), gebruik dan `logboekContext.addSubject(id, type)` per betrokkene: de interceptor maakt dan één child-logregel per betrokkene onder de actie-span, met hetzelfde `trace_id`.
+De standaard vereist een aparte logregel per betrokkene. Voor het enkelvoudige geval zet je `dataSubjectId`/`dataSubjectType` op de `LogboekContext`. Verwerk je meerdere betrokkenen in één actie (bijv. een batch), gebruik dan `logboekContext.addSubject(id, type)` per betrokkene: de interceptor maakt dan één child-logregel per betrokkene onder de actie-span, met hetzelfde `trace_id`.
