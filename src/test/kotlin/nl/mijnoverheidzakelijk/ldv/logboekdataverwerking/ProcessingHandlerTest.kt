@@ -368,9 +368,23 @@ internal class ProcessingHandlerTest {
                 processingActivityId = "https://register.example.org/activiteiten/activity-123"
             }
 
-            assertThrows<IllegalArgumentException> {
+            val e = assertThrows<IllegalArgumentException> {
                 handler.addLogboekContextToSpan(mockSpan, logboekContext)
             }
+            assert(e.message!!.contains("data_subject_id is required"))
+        }
+
+        @Test
+        fun `Names the missing type when only the id is set`() {
+            val logboekContext = LogboekContext().apply {
+                processingActivityId = "https://register.example.org/activiteiten/activity-123"
+                dataSubjectId = "subject-1"
+            }
+
+            val e = assertThrows<IllegalArgumentException> {
+                handler.addLogboekContextToSpan(mockSpan, logboekContext)
+            }
+            assert(e.message!!.contains("data_subject_id_type is required"))
         }
     }
 

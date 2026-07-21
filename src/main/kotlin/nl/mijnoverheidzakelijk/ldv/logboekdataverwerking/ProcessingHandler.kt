@@ -86,7 +86,11 @@ class ProcessingHandler {
         // The LDV standard makes data_subject_id/_type optional (0..1); MOZa deliberately
         // requires at least one betrokkene (stricter than the spec, by design).
         val subjects = logboekContext.effectiveSubjects()
-        require(subjects.isNotEmpty()) { "dpl.core.data_subject_id is required by the LDV standard" }
+        if (subjects.isEmpty()) {
+            // A half-set single pair should name the field that is actually missing.
+            require(logboekContext.dataSubjectId.isNullOrEmpty()) { "dpl.core.data_subject_id_type is required by the LDV standard" }
+            throw IllegalArgumentException("dpl.core.data_subject_id is required by the LDV standard")
+        }
         subjects.forEach {
             require(it.id.isNotEmpty()) { "dpl.core.data_subject_id is required by the LDV standard" }
             require(it.type.isNotEmpty()) { "dpl.core.data_subject_id_type is required by the LDV standard" }
@@ -208,9 +212,13 @@ class ProcessingHandler {
                     PostgresRepository()
                 }
             }
-            val exporter: SpanExporter = LdvSpanExporter(repository)
+            val mode = ConfigurationLoader.spanProcessor
+            val exporter: SpanExporter = LdvSpanExporter(
+                repository,
+                relayWriteFailures = mode == ConfigurationLoader.SpanProcessorMode.SIMPLE,
+            )
 
-            val delegate: SpanProcessor = when (ConfigurationLoader.spanProcessor) {
+            val delegate: SpanProcessor = when (mode) {
                 ConfigurationLoader.SpanProcessorMode.SIMPLE -> SimpleSpanProcessor.create(exporter)
                 ConfigurationLoader.SpanProcessorMode.BATCH -> BatchSpanProcessor.builder(exporter).build()
             }

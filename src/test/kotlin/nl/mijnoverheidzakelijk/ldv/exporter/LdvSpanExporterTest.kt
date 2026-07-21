@@ -113,6 +113,18 @@ internal class LdvSpanExporterTest {
     }
 
     @Test
+    fun `Export does not record the insert failure when relaying is disabled`() {
+        val batchExporter = LdvSpanExporter(mockRepository, relayWriteFailures = false)
+        every { mockRepository.insert(any()) } throws RuntimeException("Oops")
+
+        val result = batchExporter.export(mutableSetOf(mockTestSpan))
+
+        // Still a failure result, but nothing left behind for the recorder to consume.
+        assert(CompletableResultCode.ofFailure() == result)
+        assert(LogboekWriteFailureRecorder.consume() == null)
+    }
+
+    @Test
     fun `Export records the mapping failure for the fail-closed policy`() {
         mockkObject(SpanMapper)
         try {

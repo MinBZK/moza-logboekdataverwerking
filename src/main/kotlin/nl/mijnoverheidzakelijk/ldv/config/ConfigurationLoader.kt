@@ -99,7 +99,13 @@ object ConfigurationLoader {
      * opslaan conflicteert met dataminimalisatie (AVG art. 5(1)(c)).
      */
     val logExceptionStacktrace: Boolean
-        get() = getOptionalString("logboekdataverwerking.log-exception-stacktrace")?.toBooleanStrictOrNull() ?: false
+        get() {
+            val raw = getOptionalString("logboekdataverwerking.log-exception-stacktrace") ?: return false
+            return raw.lowercase().toBooleanStrictOrNull()
+                ?: throw IllegalArgumentException(
+                    "logboekdataverwerking.log-exception-stacktrace must be 'true' or 'false', got: $raw"
+                )
+        }
 
     /**
      * Selects which database backend stores the spans. `clickhouse` (default) is

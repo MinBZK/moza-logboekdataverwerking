@@ -234,12 +234,21 @@ internal class ConfigurationLoaderTest {
         }
 
         @Test
-        fun `defaults to false on non-boolean value`() {
+        fun `parses case-insensitively`() {
+            every {
+                mockConfig.getOptionalValue("logboekdataverwerking.log-exception-stacktrace", String::class.java)
+            } returns Optional.of("TRUE")
+
+            assert(ConfigurationLoader.logExceptionStacktrace)
+        }
+
+        @Test
+        fun `throws on non-boolean value`() {
             every {
                 mockConfig.getOptionalValue("logboekdataverwerking.log-exception-stacktrace", String::class.java)
             } returns Optional.of("yes")
 
-            assert(!ConfigurationLoader.logExceptionStacktrace)
+            assertThrows<IllegalArgumentException> { ConfigurationLoader.logExceptionStacktrace }
         }
     }
 

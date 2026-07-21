@@ -24,6 +24,9 @@ import java.util.logging.Logger
 class LdvSpanExporter(
     private val repository: SpanRepository,
     private val maxLoggedSpanIds: Int = DEFAULT_MAX_LOGGED_SPAN_IDS,
+    // Off under BATCH: export then runs on the worker thread, where the recorder is
+    // never consumed and recording would only pin the Throwable in its ThreadLocal.
+    private val relayWriteFailures: Boolean = true,
 ) : SpanExporter {
 
     init {
@@ -69,7 +72,9 @@ class LdvSpanExporter(
                 mappingFailure,
             )
             // Relay to the request thread so a fail-closed verwerking can surface it.
-            LogboekWriteFailureRecorder.record(mappingFailure)
+            if (relayWriteFailures) {
+                LogboekWriteFailureRecorder.record(mappingFailure)
+            }
         }
 
         if (rows.isEmpty()) {
@@ -93,7 +98,9 @@ class LdvSpanExporter(
                 e,
             )
             // Relay to the request thread so a fail-closed verwerking can surface it.
-            LogboekWriteFailureRecorder.record(e)
+            if (relayWriteFailures) {
+                LogboekWriteFailureRecorder.record(e)
+            }
             CompletableResultCode.ofFailure()
         }
     }
