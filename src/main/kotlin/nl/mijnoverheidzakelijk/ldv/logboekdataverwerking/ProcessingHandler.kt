@@ -83,33 +83,69 @@ class ProcessingHandler {
      * uses this to preserve an ERROR set on the exception path against a stale
      * OK that user code may have written to [LogboekContext] before throwing.
      *
-     * @param span           the span to enrich
-     * @param logboekContext the context holding attributes
-     * @param setStatus      when true (default), applies [LogboekContext.status]
-     *                       to the span via [Span.setStatus]
+     * The [requireCompleteContext] parameter controls whether an incomplete
+     * context throws. The interceptor sets this to false while another
+     * exception from the intercepted method is already propagating, so a
+     * method that failed before it could populate [LogboekContext] (e.g. a
+     * bean-validation error) doesn't have its exception replaced by one
+     * thrown from this method inside a finally block.
+     *
+     * @param span                    the span to enrich
+     * @param logboekContext          the context holding attributes
+     * @param setStatus               when true (default), applies [LogboekContext.status]
+     *                                to the span via [Span.setStatus]
+     * @param requireCompleteContext  when true (default), throws [IllegalArgumentException]
+     *                                if [LogboekContext.processingActivityId], [LogboekContext.dataSubjectId],
+     *                                or [LogboekContext.dataSubjectType] are missing, or if
+     *                                [LogboekContext.processingActivityId] isn't a valid absolute URI. When
+     *                                false, an incomplete or invalid context is logged (via [isAbsoluteUri])
+     *                                instead of thrown, and whatever attributes are present are still applied.
      */
     @JvmOverloads
-    fun addLogboekContextToSpan(span: Span, logboekContext: LogboekContext, setStatus: Boolean = true) {
+    fun addLogboekContextToSpan(
+        span: Span,
+        logboekContext: LogboekContext,
+        setStatus: Boolean = true,
+        requireCompleteContext: Boolean = true
+    ) {
         val processingActivityId = logboekContext.processingActivityId
         val dataSubjectId = logboekContext.dataSubjectId
         val dataSubjectType = logboekContext.dataSubjectType
 
-        require(!processingActivityId.isNullOrEmpty()) { "dpl.core.processing_activity_id is required by the LDV standard" }
-        require(!dataSubjectId.isNullOrEmpty()) { "dpl.core.data_subject_id is required by the LDV standard" }
-        require(!dataSubjectType.isNullOrEmpty()) { "dpl.core.data_subject_id_type is required by the LDV standard" }
+        if (requireCompleteContext) {
+            require(!processingActivityId.isNullOrEmpty()) { "dpl.core.processing_activity_id is required by the LDV standard" }
+            require(!dataSubjectId.isNullOrEmpty()) { "dpl.core.data_subject_id is required by the LDV standard" }
+            require(!dataSubjectType.isNullOrEmpty()) { "dpl.core.data_subject_id_type is required by the LDV standard" }
 
-        try {
-            val uri = java.net.URI(processingActivityId)
-            require(uri.isAbsolute) { "dpl.core.processing_activity_id must be an absolute URI: $processingActivityId" }
-        } catch (e: java.net.URISyntaxException) {
-            throw IllegalArgumentException("dpl.core.processing_activity_id must be a valid URI: $processingActivityId", e)
+            try {
+                val uri = java.net.URI(processingActivityId)
+                require(uri.isAbsolute) { "dpl.core.processing_activity_id must be an absolute URI: $processingActivityId" }
+            } catch (e: java.net.URISyntaxException) {
+                throw IllegalArgumentException("dpl.core.processing_activity_id must be a valid URI: $processingActivityId", e)
+            }
+        } else if (processingActivityId.isNullOrEmpty() || dataSubjectId.isNullOrEmpty() || dataSubjectType.isNullOrEmpty()) {
+            LOGGER.warning("Logboek context is incomplete; not enforced because another exception is already propagating")
+        } else if (!isAbsoluteUri(processingActivityId)) {
+            LOGGER.warning("dpl.core.processing_activity_id is not a valid absolute URI; not enforced because another exception is already propagating: $processingActivityId")
         }
 
-        span.setAttribute("dpl.core.processing_activity_id", processingActivityId)
-        span.setAttribute("dpl.core.data_subject_id", dataSubjectId)
-        span.setAttribute("dpl.core.data_subject_id_type", dataSubjectType)
+        if (!processingActivityId.isNullOrEmpty()) span.setAttribute("dpl.core.processing_activity_id", processingActivityId)
+        if (!dataSubjectId.isNullOrEmpty()) span.setAttribute("dpl.core.data_subject_id", dataSubjectId)
+        if (!dataSubjectType.isNullOrEmpty()) span.setAttribute("dpl.core.data_subject_id_type", dataSubjectType)
         if (setStatus) {
             span.setStatus(logboekContext.status)
+        }
+    }
+
+    /**
+     * @return true if [value] parses as an absolute URI per the LDV standard's
+     *         requirement for `dpl.core.processing_activity_id`
+     */
+    private fun isAbsoluteUri(value: String): Boolean {
+        return try {
+            java.net.URI(value).isAbsolute
+        } catch (e: java.net.URISyntaxException) {
+            false
         }
     }
 

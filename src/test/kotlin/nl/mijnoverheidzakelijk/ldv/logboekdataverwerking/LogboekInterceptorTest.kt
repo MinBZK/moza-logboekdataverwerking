@@ -129,7 +129,7 @@ internal class LogboekInterceptorTest {
             verify { mockHandler.startSpan("test-span", any()) }
             verify { mockSpan.makeCurrent() }
             verify { mockInvocationContext.proceed() }
-            verify { mockHandler.addLogboekContextToSpan(mockSpan, mockLogboekContext, true) }
+            verify { mockHandler.addLogboekContextToSpan(mockSpan, mockLogboekContext, true, true) }
             verify { mockSpan.end() }
             assert(result == "result")
             assert(mockLogboekContext.processingActivityId == "https://register.example.org/activiteiten/activity-123")
@@ -165,7 +165,9 @@ internal class LogboekInterceptorTest {
             // setStatus = false: the interceptor must not let addLogboekContextToSpan
             // re-apply status from LogboekContext on the exception path, otherwise an
             // optimistic OK written by user code before the throw would mask the ERROR.
-            verify { mockHandler.addLogboekContextToSpan(mockSpan, mockLogboekContext, false) }
+            // requireCompleteContext = false: an incomplete LogboekContext (e.g. because
+            // the method body never ran) must not throw here and replace testException.
+            verify { mockHandler.addLogboekContextToSpan(mockSpan, mockLogboekContext, false, false) }
             verify { mockSpan.end() }
         }
 
@@ -181,7 +183,7 @@ internal class LogboekInterceptorTest {
             assertThrows<RuntimeException> { interceptor.log(mockInvocationContext) }
 
             verify { mockSpan.setStatus(StatusCode.ERROR, "kaboom") }
-            verify { mockHandler.addLogboekContextToSpan(mockSpan, mockLogboekContext, false) }
+            verify { mockHandler.addLogboekContextToSpan(mockSpan, mockLogboekContext, false, false) }
             // setStatus(OK) from addLogboekContextToSpan would otherwise be locked-in by OTel
             // and prevent the ERROR set in the catch from sticking.
         }
