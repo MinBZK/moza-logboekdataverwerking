@@ -39,6 +39,12 @@ class LogboekInterceptor {
      * sets ERROR directly on the span and prevents the finally-block from overwriting
      * it via the (possibly stale) status field on [LogboekContext].
      *
+     * The finally block also relaxes [LogboekContext] validation (`requireCompleteContext =
+     * false`) whenever an exception from the intercepted method is already propagating.
+     * Otherwise, a method that failed before it could populate [LogboekContext] (e.g. a
+     * bean-validation error on its parameters) would have that exception replaced by an
+     * IllegalArgumentException thrown from this finally block.
+     *
      * @param context the invocation context
      * @return the result of the intercepted method
      * @throws Exception propagated from the intercepted method
@@ -73,7 +79,15 @@ class LogboekInterceptor {
             logboekContext.processingActivityId = processingActivityId
             // On the exception path ERROR is already set; skip re-applying status. An
             // optimistic OK would override it (OTel precedence: Ok > Error) and drop the error.
-            handler.addLogboekContextToSpan(span, logboekContext, setStatus = !caughtException)
+            // requireCompleteContext is also relaxed on that path, so an incomplete context
+            // (never populated because the method body didn't run) can't throw here and
+            // replace the exception already propagating from the catch block above.
+            handler.addLogboekContextToSpan(
+                span,
+                logboekContext,
+                setStatus = !caughtException,
+                requireCompleteContext = !caughtException
+            )
             span.end()
         }
     }

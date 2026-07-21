@@ -345,5 +345,71 @@ internal class ProcessingHandlerTest {
             verify(inverse = true) { mockSpan.setStatus(any<StatusCode>()) }
             verify(inverse = true) { mockSpan.setStatus(any<StatusCode>(), any<String>()) }
         }
+
+        @Test
+        fun `requireCompleteContext=false does not throw when context is incomplete`() {
+            // given
+            val logboekContext = LogboekContext().apply {
+                dataSubjectId = "subject-456"
+            }
+
+            // when
+            handler.addLogboekContextToSpan(mockSpan, logboekContext, requireCompleteContext = false)
+
+            // then
+            verify { mockSpan.setAttribute("dpl.core.data_subject_id", "subject-456") }
+            verify(inverse = true) { mockSpan.setAttribute("dpl.core.processing_activity_id", any<String>()) }
+            verify(inverse = true) { mockSpan.setAttribute("dpl.core.data_subject_id_type", any<String>()) }
+        }
+
+        @Test
+        fun `requireCompleteContext=false still sets all attributes when context happens to be complete`() {
+            // given
+            val logboekContext = LogboekContext().apply {
+                processingActivityId = "https://register.example.org/activiteiten/activity-123"
+                dataSubjectId = "subject-456"
+                dataSubjectType = "BSN"
+            }
+
+            // when
+            handler.addLogboekContextToSpan(mockSpan, logboekContext, requireCompleteContext = false)
+
+            // then
+            verify { mockSpan.setAttribute("dpl.core.processing_activity_id", "https://register.example.org/activiteiten/activity-123") }
+            verify { mockSpan.setAttribute("dpl.core.data_subject_id", "subject-456") }
+            verify { mockSpan.setAttribute("dpl.core.data_subject_id_type", "BSN") }
+        }
+
+        @Test
+        fun `requireCompleteContext=false does not validate processingActivityId as a URI`() {
+            // given
+            val logboekContext = LogboekContext().apply {
+                processingActivityId = "not a valid uri {}"
+                dataSubjectId = "subject-456"
+                dataSubjectType = "BSN"
+            }
+
+            // when
+            handler.addLogboekContextToSpan(mockSpan, logboekContext, requireCompleteContext = false)
+
+            // then
+            verify { mockSpan.setAttribute("dpl.core.processing_activity_id", "not a valid uri {}") }
+        }
+
+        @Test
+        fun `requireCompleteContext=false does not throw for a relative processingActivityId`() {
+            // given
+            val logboekContext = LogboekContext().apply {
+                processingActivityId = "/activiteiten/activity-123"
+                dataSubjectId = "subject-456"
+                dataSubjectType = "BSN"
+            }
+
+            // when
+            handler.addLogboekContextToSpan(mockSpan, logboekContext, requireCompleteContext = false)
+
+            // then
+            verify { mockSpan.setAttribute("dpl.core.processing_activity_id", "/activiteiten/activity-123") }
+        }
     }
 }
