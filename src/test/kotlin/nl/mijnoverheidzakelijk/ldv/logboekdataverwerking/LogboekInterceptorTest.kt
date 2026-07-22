@@ -4,8 +4,11 @@ import io.mockk.clearAllMocks
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.verify
+import io.opentelemetry.api.OpenTelemetry
 import io.opentelemetry.api.trace.Span
+import io.opentelemetry.api.trace.SpanBuilder
 import io.opentelemetry.api.trace.StatusCode
+import io.opentelemetry.api.trace.Tracer
 import io.opentelemetry.context.Scope
 import jakarta.interceptor.InvocationContext
 import jakarta.ws.rs.core.HttpHeaders
@@ -136,7 +139,7 @@ internal class LogboekInterceptorTest {
             verify { mockHandler.startSpan("test-span", any()) }
             verify { mockSpan.makeCurrent() }
             verify { mockInvocationContext.proceed() }
-            verify { mockHandler.addLogboekContextToSpan(mockSpan, mockLogboekContext, true) }
+            verify { mockHandler.addLogboekContextToSpan(mockSpan, mockLogboekContext, false) }
             verify { mockSpan.end() }
             assert(result == "result")
             assert(mockLogboekContext.processingActivityId == "https://register.example.org/activiteiten/activity-123")
@@ -169,10 +172,11 @@ internal class LogboekInterceptorTest {
 
             assert(thrown == testException)
             verify { mockSpan.setStatus(StatusCode.ERROR, "Test exception") }
-            // setStatus = false: the interceptor must not let addLogboekContextToSpan
-            // re-apply status from LogboekContext on the exception path, otherwise an
-            // optimistic OK written by user code before the throw would mask the ERROR.
-            verify { mockHandler.addLogboekContextToSpan(mockSpan, mockLogboekContext, false) }
+            // propagatingFailure = true: status must not be re-applied from LogboekContext
+            // (an optimistic OK written by user code before the throw would mask the ERROR)
+            // and an incomplete LogboekContext (e.g. because the method body never ran)
+            // must not throw here and replace testException.
+            verify { mockHandler.addLogboekContextToSpan(mockSpan, mockLogboekContext, true) }
             verify { mockSpan.end() }
         }
 
@@ -188,9 +192,9 @@ internal class LogboekInterceptorTest {
             assertThrows<RuntimeException> { interceptor.log(mockInvocationContext) }
 
             verify { mockSpan.setStatus(StatusCode.ERROR, "kaboom") }
-            verify { mockHandler.addLogboekContextToSpan(mockSpan, mockLogboekContext, false) }
-            // setStatus(OK) from addLogboekContextToSpan would otherwise be locked-in by OTel
-            // and prevent the ERROR set in the catch from sticking.
+            verify { mockHandler.addLogboekContextToSpan(mockSpan, mockLogboekContext, true) }
+            // Without propagatingFailure, setStatus(OK) from addLogboekContextToSpan would
+            // be locked-in by OTel and prevent the ERROR set in the catch from sticking.
         }
 
         @Test
@@ -272,6 +276,33 @@ internal class LogboekInterceptorTest {
             assertThrows<IllegalStateException> { interceptor.log(mockInvocationContext) }
 
             verify { mockSpan.setAttribute("exception.stacktrace", any<String>()) }
+        }
+
+        @Test
+        fun `Original exception reaches the caller when context was never populated`() {
+            // Real ProcessingHandler (with a mocked OpenTelemetry) instead of the relaxed
+            // mock, so the enrichment in the finally block actually runs its validation.
+            val realHandler = ProcessingHandler()
+            val otel = mockk<OpenTelemetry>()
+            val tracer = mockk<Tracer>()
+            val spanBuilder = mockk<SpanBuilder>()
+            every { otel.getTracer(any()) } returns tracer
+            every { tracer.spanBuilder(any()) } returns spanBuilder
+            every { spanBuilder.setParent(any()) } returns spanBuilder
+            every { spanBuilder.startSpan() } returns mockSpan
+            setPrivateField(realHandler, "openTelemetry", otel)
+            setPrivateField(interceptor, "handler", realHandler)
+
+            val mockMethod = getAnnotatedMethod()
+            every { mockInvocationContext.method } returns mockMethod
+            val original = IllegalStateException("business failure")
+            every { mockInvocationContext.proceed() } throws original
+
+            // when / then: the never-populated LogboekContext must not produce an
+            // IllegalArgumentException that replaces the business exception.
+            val thrown = assertThrows<IllegalStateException> { interceptor.log(mockInvocationContext) }
+            assert(thrown === original)
+            verify { mockSpan.end() }
         }
 
         @Test

@@ -246,3 +246,9 @@ LDV-spans gebruiken altijd een eigen, toegewijde OpenTelemetry-SDK met een `Alwa
 ### Meerdere betrokkenen
 
 De standaard vereist een aparte logregel per betrokkene. Voor het enkelvoudige geval zet je `dataSubjectId`/`dataSubjectType` op de `LogboekContext`. Verwerk je meerdere betrokkenen in één actie (bijv. een batch), gebruik dan `logboekContext.addSubject(id, type)` per betrokkene: de interceptor maakt dan één child-logregel per betrokkene onder de actie-span, met hetzelfde `trace_id`.
+
+### Contextvalidatie en het exception-pad
+
+Op het succespad is de validatie strikt: ontbreekt `processing_activity_id`, ontbreekt een betrokkene of is de activity-id geen absolute URI, dan gooit de enrichment een `IllegalArgumentException` vóór `span.end()`. Er wordt dan geen logregel geëxporteerd; de verwerking faalt luid in plaats van stil een onvolledige logregel te schrijven.
+
+Gooit de geïntercepteerde methode zelf een exceptie, dan versoepelt de interceptor de validatie (`propagatingFailure`): een onvolledige context wordt als WARNING gelogd (met `trace_id:span_id`), de wél aanwezige attributen worden gezet en de logregel wordt geëxporteerd met status ERROR en de `exception.*`-attributen. Bij meerdere betrokkenen krijgen ook de child-logregels status ERROR. Dit is een bewuste afwijking van de regel dat elke logregel ten minste één betrokkene bevat: een onvolledige error-logregel is waardevoller dan geen logregel, en de oorspronkelijke exceptie mag nooit worden gemaskeerd door een validatiefout uit de logging zelf.

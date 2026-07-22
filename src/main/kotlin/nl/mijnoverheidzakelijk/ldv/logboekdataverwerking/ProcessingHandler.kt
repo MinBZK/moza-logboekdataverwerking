@@ -4,6 +4,7 @@ import io.opentelemetry.api.OpenTelemetry
 import io.opentelemetry.api.common.AttributeKey
 import io.opentelemetry.api.common.Attributes
 import io.opentelemetry.api.trace.Span
+import io.opentelemetry.api.trace.StatusCode
 import io.opentelemetry.api.trace.Tracer
 import io.opentelemetry.context.Context
 import io.opentelemetry.sdk.OpenTelemetrySdk
@@ -65,64 +66,124 @@ class ProcessingHandler {
     }
 
     /**
-     * Adds Logboek context attributes and (optionally) status to the given span.
+     * Adds Logboek context attributes and status to the given span.
      *
-     * The [setStatus] parameter exists so callers can apply attributes without
-     * overwriting a status that has already been set elsewhere. The interceptor
-     * uses this to preserve an ERROR set on the exception path against a stale
-     * OK that user code may have written to [LogboekContext] before throwing.
+     * The [propagatingFailure] parameter tells this method that an exception from the
+     * intercepted method is already propagating. Validation then warns instead of
+     * throws, so a method that failed before it could populate [LogboekContext] (e.g.
+     * a bean-validation error on its parameters) doesn't have that exception replaced
+     * by one thrown from this method inside a finally block. Whatever attributes are
+     * present are still applied, so an incomplete error-logregel is exported rather
+     * than none at all. The span's own status is then left untouched (the interceptor
+     * has already set ERROR on it); per-betrokkene child logregels get
+     * [StatusCode.ERROR].
      *
-     * @param span           the span to enrich
-     * @param logboekContext the context holding attributes
-     * @param setStatus      when true (default), applies [LogboekContext.status]
-     *                       to the span via [Span.setStatus]
+     * @param span               the span to enrich
+     * @param logboekContext     the context holding attributes
+     * @param propagatingFailure when false (default), throws [IllegalArgumentException]
+     *                           if [LogboekContext.processingActivityId] is missing or
+     *                           not an absolute URI, or no complete betrokkene
+     *                           (id + type) is present, and applies
+     *                           [LogboekContext.status] to the span. When true, those
+     *                           problems are logged as warnings (with `trace_id:span_id`)
+     *                           instead.
      */
     @JvmOverloads
-    fun addLogboekContextToSpan(span: Span, logboekContext: LogboekContext, setStatus: Boolean = true) {
+    fun addLogboekContextToSpan(
+        span: Span,
+        logboekContext: LogboekContext,
+        propagatingFailure: Boolean = false
+    ) {
         val processingActivityId = logboekContext.processingActivityId
-        require(!processingActivityId.isNullOrEmpty()) { "dpl.core.processing_activity_id is required by the LDV standard" }
-        validateActivityUri(processingActivityId)
-
-        // The LDV standard makes data_subject_id/_type optional (0..1); MOZa deliberately
-        // requires at least one betrokkene (stricter than the spec, by design).
         val subjects = logboekContext.effectiveSubjects()
-        if (subjects.isEmpty()) {
-            // A half-set single pair should name the field that is actually missing.
-            require(logboekContext.dataSubjectId.isNullOrEmpty()) { "dpl.core.data_subject_id_type is required by the LDV standard" }
-            throw IllegalArgumentException("dpl.core.data_subject_id is required by the LDV standard")
-        }
-        subjects.forEach {
-            require(it.id.isNotEmpty()) { "dpl.core.data_subject_id is required by the LDV standard" }
-            require(it.type.isNotEmpty()) { "dpl.core.data_subject_id_type is required by the LDV standard" }
+
+        if (propagatingFailure) {
+            warnOnIncompleteContext(span, logboekContext, subjects)
+        } else {
+            require(!processingActivityId.isNullOrEmpty()) { "dpl.core.processing_activity_id is required by the LDV standard" }
+            validateActivityUri(processingActivityId)
+
+            // The LDV standard makes data_subject_id/_type optional (0..1); MOZa deliberately
+            // requires at least one betrokkene (stricter than the spec, by design).
+            if (subjects.isEmpty()) {
+                // A half-set single pair should name the field that is actually missing.
+                require(logboekContext.dataSubjectId.isNullOrEmpty()) { "dpl.core.data_subject_id_type is required by the LDV standard" }
+                throw IllegalArgumentException("dpl.core.data_subject_id is required by the LDV standard")
+            }
+            subjects.forEach {
+                require(it.id.isNotEmpty()) { "dpl.core.data_subject_id is required by the LDV standard" }
+                require(it.type.isNotEmpty()) { "dpl.core.data_subject_id_type is required by the LDV standard" }
+            }
         }
 
-        span.setAttribute("dpl.core.processing_activity_id", processingActivityId)
-        if (setStatus) {
+        if (!processingActivityId.isNullOrEmpty()) {
+            span.setAttribute("dpl.core.processing_activity_id", processingActivityId)
+        }
+        if (!propagatingFailure) {
             span.setStatus(logboekContext.status)
         }
 
-        if (subjects.size == 1) {
-            applySubject(span, subjects[0])
-        } else {
+        if (subjects.size > 1) {
             // LDV requires a separate logregel per betrokkene; the action span stays
             // subject-less and each betrokkene becomes a child span.
             val parentContext = Context.root().with(span)
             val childName = logboekContext.actionName?.takeIf { it.isNotEmpty() } ?: CHILD_SPAN_NAME
+            val childStatus = if (propagatingFailure) StatusCode.ERROR else logboekContext.status
             subjects.forEach { subject ->
                 val child = startSpan(childName, parentContext)
-                child.setAttribute("dpl.core.processing_activity_id", processingActivityId)
-                applySubject(child, subject)
-                if (setStatus) {
-                    child.setStatus(logboekContext.status)
+                if (!processingActivityId.isNullOrEmpty()) {
+                    child.setAttribute("dpl.core.processing_activity_id", processingActivityId)
                 }
+                applySubject(child, subject)
+                child.setStatus(childStatus)
                 child.end()
+            }
+        } else if (subjects.size == 1) {
+            applySubject(span, subjects[0])
+        } else {
+            // Propagating path with a half-set single pair: still apply what is present.
+            logboekContext.dataSubjectId?.takeIf { it.isNotEmpty() }
+                ?.let { span.setAttribute("dpl.core.data_subject_id", it) }
+            logboekContext.dataSubjectType?.takeIf { it.isNotEmpty() }
+                ?.let { span.setAttribute("dpl.core.data_subject_id_type", it) }
+        }
+    }
+
+    /**
+     * Logs what strict validation would have thrown, with the `trace_id:span_id`
+     * so the incomplete logregel can be found back in the Logboek.
+     */
+    private fun warnOnIncompleteContext(span: Span, logboekContext: LogboekContext, subjects: List<DataSubject>) {
+        val processingActivityId = logboekContext.processingActivityId
+        if (processingActivityId.isNullOrEmpty()) {
+            warnIncomplete(span, "dpl.core.processing_activity_id is missing")
+        } else if (!isAbsoluteUri(processingActivityId)) {
+            warnIncomplete(span, "dpl.core.processing_activity_id is not a valid absolute URI: $processingActivityId")
+        }
+        if (subjects.isEmpty()) {
+            if (!logboekContext.dataSubjectId.isNullOrEmpty()) {
+                warnIncomplete(span, "dpl.core.data_subject_id_type is missing")
+            } else if (!logboekContext.dataSubjectType.isNullOrEmpty()) {
+                warnIncomplete(span, "dpl.core.data_subject_id is missing")
+            } else {
+                warnIncomplete(span, "no betrokkene (dpl.core.data_subject_id/_type) is set")
+            }
+        } else {
+            subjects.forEach {
+                if (it.id.isEmpty()) warnIncomplete(span, "dpl.core.data_subject_id is empty for a betrokkene")
+                if (it.type.isEmpty()) warnIncomplete(span, "dpl.core.data_subject_id_type is empty for a betrokkene")
             }
         }
     }
 
+    private fun warnIncomplete(span: Span, problem: String) {
+        val sc = span.spanContext
+        LOGGER.warning("$problem; not enforced because another exception is already propagating [${sc.traceId}:${sc.spanId}]")
+    }
+
     private fun applySubject(span: Span, subject: DataSubject) {
-        span.setAttribute("dpl.core.data_subject_id", subject.id)
-        span.setAttribute("dpl.core.data_subject_id_type", subject.type)
+        if (subject.id.isNotEmpty()) span.setAttribute("dpl.core.data_subject_id", subject.id)
+        if (subject.type.isNotEmpty()) span.setAttribute("dpl.core.data_subject_id_type", subject.type)
     }
 
     private fun validateActivityUri(processingActivityId: String) {
@@ -144,6 +205,18 @@ class ProcessingHandler {
         val failure = LogboekWriteFailureRecorder.consume() ?: return
         if (throwOnFailure && ConfigurationLoader.writeFailurePolicy == ConfigurationLoader.WriteFailurePolicy.FAIL_CLOSED) {
             throw LogboekWriteException("Logregel kon niet in het Logboek worden opgeslagen", failure)
+        }
+    }
+
+    /**
+     * @return true if [value] parses as an absolute URI per the LDV standard's
+     *         requirement for `dpl.core.processing_activity_id`
+     */
+    private fun isAbsoluteUri(value: String): Boolean {
+        return try {
+            java.net.URI(value).isAbsolute
+        } catch (e: java.net.URISyntaxException) {
+            false
         }
     }
 

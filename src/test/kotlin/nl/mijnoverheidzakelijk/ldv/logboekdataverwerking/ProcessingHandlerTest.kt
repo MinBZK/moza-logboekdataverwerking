@@ -321,7 +321,7 @@ internal class ProcessingHandlerTest {
         }
 
         @Test
-        fun `setStatus=false applies attributes but does not touch span status`() {
+        fun `Propagating failure still sets all attributes but does not touch span status`() {
             // given
             val logboekContext = LogboekContext().apply {
                 processingActivityId = "https://register.example.org/activiteiten/activity-123"
@@ -331,7 +331,7 @@ internal class ProcessingHandlerTest {
             }
 
             // when
-            handler.addLogboekContextToSpan(mockSpan, logboekContext, setStatus = false)
+            handler.addLogboekContextToSpan(mockSpan, logboekContext, propagatingFailure = true)
 
             // then
             verify { mockSpan.setAttribute("dpl.core.processing_activity_id", "https://register.example.org/activiteiten/activity-123") }
@@ -385,6 +385,63 @@ internal class ProcessingHandlerTest {
                 handler.addLogboekContextToSpan(mockSpan, logboekContext)
             }
             assert(e.message!!.contains("data_subject_id_type is required"))
+        }
+
+        @Test
+        fun `Propagating failure does not throw when context is incomplete`() {
+            val logboekContext = LogboekContext().apply {
+                dataSubjectId = "subject-456"
+            }
+
+            handler.addLogboekContextToSpan(mockSpan, logboekContext, propagatingFailure = true)
+
+            // The present half of the pair is still applied; nothing throws.
+            verify { mockSpan.setAttribute("dpl.core.data_subject_id", "subject-456") }
+            verify(inverse = true) { mockSpan.setAttribute("dpl.core.processing_activity_id", any<String>()) }
+            verify(inverse = true) { mockSpan.setAttribute("dpl.core.data_subject_id_type", any<String>()) }
+        }
+
+        @Test
+        fun `Propagating failure does not validate processingActivityId as a URI`() {
+            val logboekContext = LogboekContext().apply {
+                processingActivityId = "not a valid uri {}"
+                dataSubjectId = "subject-456"
+                dataSubjectType = "BSN"
+            }
+
+            handler.addLogboekContextToSpan(mockSpan, logboekContext, propagatingFailure = true)
+
+            verify { mockSpan.setAttribute("dpl.core.processing_activity_id", "not a valid uri {}") }
+        }
+
+        @Test
+        fun `Propagating failure does not throw for a relative processingActivityId`() {
+            val logboekContext = LogboekContext().apply {
+                processingActivityId = "/activiteiten/activity-123"
+                dataSubjectId = "subject-456"
+                dataSubjectType = "BSN"
+            }
+
+            handler.addLogboekContextToSpan(mockSpan, logboekContext, propagatingFailure = true)
+
+            verify { mockSpan.setAttribute("dpl.core.processing_activity_id", "/activiteiten/activity-123") }
+        }
+
+        @Test
+        fun `Propagating failure marks child logregels ERROR for multiple subjects`() {
+            val logboekContext = LogboekContext().apply {
+                processingActivityId = "https://register.example.org/activiteiten/activity-123"
+                addSubject("subject-1", "BSN")
+                addSubject("subject-2", "KVK")
+            }
+
+            handler.addLogboekContextToSpan(mockSpan, logboekContext, propagatingFailure = true)
+
+            // Child spans (the builder also returns mockSpan) each get ERROR; the parent's
+            // status stays untouched because the interceptor owns it on this path.
+            verify(exactly = 2) { mockTracer.spanBuilder("verwerking-betrokkene") }
+            verify(exactly = 2) { mockSpan.setStatus(StatusCode.ERROR) }
+            verify(inverse = true) { mockSpan.setStatus(StatusCode.UNSET) }
         }
     }
 
