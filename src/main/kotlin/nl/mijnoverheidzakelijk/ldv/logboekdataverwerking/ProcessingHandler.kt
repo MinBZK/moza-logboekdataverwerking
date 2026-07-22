@@ -68,25 +68,19 @@ class ProcessingHandler {
     /**
      * Adds Logboek context attributes and status to the given span.
      *
+     * Validation never breaks the verwerking (LDV 3.3.2.1): a missing or invalid
+     * [LogboekContext] field is logged as a warning (with `trace_id:span_id`) and
+     * the logregel is exported with whatever attributes are present.
+     *
      * The [propagatingFailure] parameter tells this method that an exception from the
-     * intercepted method is already propagating. Validation then warns instead of
-     * throws, so a method that failed before it could populate [LogboekContext] (e.g.
-     * a bean-validation error on its parameters) doesn't have that exception replaced
-     * by one thrown from this method inside a finally block. Whatever attributes are
-     * present are still applied, so an incomplete error-logregel is exported rather
-     * than none at all. The span's own status is then left untouched (the interceptor
-     * has already set ERROR on it); per-betrokkene child logregels get
-     * [StatusCode.ERROR].
+     * intercepted method is already propagating. The span's own status is then left
+     * untouched (the interceptor has already set ERROR on it) and per-betrokkene child
+     * logregels get [StatusCode.ERROR] instead of [LogboekContext.status].
      *
      * @param span               the span to enrich
      * @param logboekContext     the context holding attributes
-     * @param propagatingFailure when false (default), throws [IllegalArgumentException]
-     *                           if [LogboekContext.processingActivityId] is missing or
-     *                           not an absolute URI, or no complete betrokkene
-     *                           (id + type) is present, and applies
-     *                           [LogboekContext.status] to the span. When true, those
-     *                           problems are logged as warnings (with `trace_id:span_id`)
-     *                           instead.
+     * @param propagatingFailure when true, skips applying [LogboekContext.status] to
+     *                           the span and marks child logregels as ERROR
      */
     @JvmOverloads
     fun addLogboekContextToSpan(
@@ -97,24 +91,7 @@ class ProcessingHandler {
         val processingActivityId = logboekContext.processingActivityId
         val subjects = logboekContext.effectiveSubjects()
 
-        if (propagatingFailure) {
-            warnOnIncompleteContext(span, logboekContext, subjects)
-        } else {
-            require(!processingActivityId.isNullOrEmpty()) { "dpl.core.processing_activity_id is required by the LDV standard" }
-            validateActivityUri(processingActivityId)
-
-            // The LDV standard makes data_subject_id/_type optional (0..1); MOZa deliberately
-            // requires at least one betrokkene (stricter than the spec, by design).
-            if (subjects.isEmpty()) {
-                // A half-set single pair should name the field that is actually missing.
-                require(logboekContext.dataSubjectId.isNullOrEmpty()) { "dpl.core.data_subject_id_type is required by the LDV standard" }
-                throw IllegalArgumentException("dpl.core.data_subject_id is required by the LDV standard")
-            }
-            subjects.forEach {
-                require(it.id.isNotEmpty()) { "dpl.core.data_subject_id is required by the LDV standard" }
-                require(it.type.isNotEmpty()) { "dpl.core.data_subject_id_type is required by the LDV standard" }
-            }
-        }
+        warnOnIncompleteContext(span, logboekContext, subjects)
 
         if (!processingActivityId.isNullOrEmpty()) {
             span.setAttribute("dpl.core.processing_activity_id", processingActivityId)
@@ -141,7 +118,7 @@ class ProcessingHandler {
         } else if (subjects.size == 1) {
             applySubject(span, subjects[0])
         } else {
-            // Propagating path with a half-set single pair: still apply what is present.
+            // Half-set single pair: still apply what is present.
             logboekContext.dataSubjectId?.takeIf { it.isNotEmpty() }
                 ?.let { span.setAttribute("dpl.core.data_subject_id", it) }
             logboekContext.dataSubjectType?.takeIf { it.isNotEmpty() }
@@ -150,8 +127,11 @@ class ProcessingHandler {
     }
 
     /**
-     * Logs what strict validation would have thrown, with the `trace_id:span_id`
-     * so the incomplete logregel can be found back in the Logboek.
+     * Warns (with the `trace_id:span_id`, so the incomplete logregel can be found
+     * back in the Logboek) for every required LDV field that is missing or invalid.
+     * Warns instead of throws: logging must never break the verwerking (LDV 3.3.2.1).
+     * A logregel without betrokkene is valid for niet-persoonsgegevens verwerkingen;
+     * the warning helps spot forgotten context.
      */
     private fun warnOnIncompleteContext(span: Span, logboekContext: LogboekContext, subjects: List<DataSubject>) {
         val processingActivityId = logboekContext.processingActivityId
@@ -178,21 +158,12 @@ class ProcessingHandler {
 
     private fun warnIncomplete(span: Span, problem: String) {
         val sc = span.spanContext
-        LOGGER.warning("$problem; not enforced because another exception is already propagating [${sc.traceId}:${sc.spanId}]")
+        LOGGER.warning("$problem; the logregel is exported with incomplete context [${sc.traceId}:${sc.spanId}]")
     }
 
     private fun applySubject(span: Span, subject: DataSubject) {
         if (subject.id.isNotEmpty()) span.setAttribute("dpl.core.data_subject_id", subject.id)
         if (subject.type.isNotEmpty()) span.setAttribute("dpl.core.data_subject_id_type", subject.type)
-    }
-
-    private fun validateActivityUri(processingActivityId: String) {
-        try {
-            val uri = java.net.URI(processingActivityId)
-            require(uri.isAbsolute) { "dpl.core.processing_activity_id must be an absolute URI: $processingActivityId" }
-        } catch (e: java.net.URISyntaxException) {
-            throw IllegalArgumentException("dpl.core.processing_activity_id must be a valid URI: $processingActivityId", e)
-        }
     }
 
     /**

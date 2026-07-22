@@ -2,6 +2,7 @@ package nl.mijnoverheidzakelijk.ldv.logboekdataverwerking
 
 import io.opentelemetry.api.trace.StatusCode
 import io.opentelemetry.api.trace.propagation.W3CTraceContextPropagator
+import io.opentelemetry.context.ContextKey
 import io.opentelemetry.context.propagation.TextMapGetter
 import nl.mijnoverheidzakelijk.ldv.config.ConfigurationLoader
 import nl.mijnoverheidzakelijk.ldv.exporter.LogboekWriteFailureRecorder
@@ -12,6 +13,7 @@ import jakarta.interceptor.Interceptor
 import jakarta.interceptor.InvocationContext
 import jakarta.ws.rs.core.Context
 import jakarta.ws.rs.core.HttpHeaders
+import java.util.logging.Logger
 
 /**
  * CDI interceptor that surrounds methods annotated with [Logboek] and creates
@@ -25,6 +27,14 @@ import jakarta.ws.rs.core.HttpHeaders
 @Logboek
 @Interceptor
 class LogboekInterceptor {
+
+    private companion object {
+        private val LOGGER: Logger = Logger.getLogger(LogboekInterceptor::class.java.name)
+
+        /** Marks the current context as inside an LDV action, so nested actions parent to it. */
+        private val LDV_ACTION: ContextKey<Boolean> = ContextKey.named("ldv-action")
+    }
+
     @Inject
     private lateinit var logboekContext: LogboekContext
 
@@ -41,12 +51,14 @@ class LogboekInterceptor {
      * sets ERROR directly on the span and prevents the finally-block from overwriting
      * it via the (possibly stale) status field on [LogboekContext].
      *
-     * The finally block passes `propagatingFailure = true` whenever an exception from
-     * the intercepted method is already propagating: validation then warns instead of
-     * throws and the ERROR status set above is left in place. Otherwise, a method that
-     * failed before it could populate [LogboekContext] (e.g. a bean-validation error on
-     * its parameters) would have that exception replaced by an IllegalArgumentException
-     * thrown from this finally block.
+     * A nested [Logboek] action parents to the enclosing action; only the outermost
+     * action adopts an inbound `traceparent`.
+     *
+     * The finally block enriches the span via [ProcessingHandler.addLogboekContextToSpan],
+     * which warns instead of throws on an incomplete [LogboekContext], so the logregel
+     * export can never fail or replace the outcome of the intercepted method (LDV
+     * 3.3.2.1). `propagatingFailure = true` on the exception path keeps the ERROR status
+     * set above in place and marks per-betrokkene child logregels as ERROR.
      *
      * @param context the invocation context
      * @return the result of the intercepted method
@@ -55,16 +67,23 @@ class LogboekInterceptor {
     @AroundInvoke
     @Throws(Exception::class)
     fun log(context: InvocationContext): Any? {
-        val propagatorInstance = W3CTraceContextPropagator.getInstance()
-        val traceContext = propagatorInstance.extract(
-            io.opentelemetry.context.Context.current(),
-            headers,
-            HttpHeadersGetter()
-        )
+        val currentContext = io.opentelemetry.context.Context.current()
+        // A nested @Logboek action parents to the enclosing local action (LDV: een actie
+        // gestart door een andere actie neemt diens span_id op als parent_span_id). Only
+        // the outermost action adopts an inbound traceparent: re-extracting it per
+        // invocation would re-parent nested actions to the remote caller's span.
+        val traceContext = if (currentContext.get(LDV_ACTION) != null) {
+            currentContext
+        } else {
+            W3CTraceContextPropagator.getInstance().extract(currentContext, headers, HttpHeadersGetter())
+        }
 
         val annotation = context.method.getAnnotation(Logboek::class.java)
-        val name = annotation.name
-        require(name.isNotEmpty()) { "Span name is required by the LDV standard" }
+        // LDV 3.3.2.1: an empty name is auto-filled, it must never cause a runtime error.
+        val name = annotation.name.ifEmpty {
+            LOGGER.warning("@Logboek name is empty; using method name '${context.method.name}'")
+            context.method.name
+        }
         val processingActivityId = annotation.processingActivityId
 
         // Drop any write failure left on this (pooled) thread by an earlier request, so
@@ -75,8 +94,10 @@ class LogboekInterceptor {
         var caughtException = false
 
         try {
-            span.makeCurrent().use { _ ->
-                return context.proceed()
+            traceContext.with(LDV_ACTION, true).makeCurrent().use { _ ->
+                span.makeCurrent().use { _ ->
+                    return context.proceed()
+                }
             }
         } catch (e: Exception) {
             caughtException = true
@@ -92,10 +113,8 @@ class LogboekInterceptor {
             logboekContext.processingActivityId = processingActivityId
             logboekContext.actionName = name
             // On the exception path ERROR is already set; propagatingFailure skips
-            // re-applying status (an optimistic OK would override it, OTel precedence:
-            // Ok > Error) and relaxes validation, so an incomplete context (never
-            // populated because the method body didn't run) can't throw here and
-            // replace the exception already propagating from the catch block above.
+            // re-applying status from the context (an optimistic OK would override it,
+            // OTel precedence: Ok > Error) and marks child logregels ERROR.
             handler.addLogboekContextToSpan(span, logboekContext, propagatingFailure = caughtException)
             span.end()
             // throwOnFailure=false on the exception path: a write failure must not mask

@@ -181,7 +181,7 @@ Wanneer uitgeschakeld, worden er geen verbindingen met de database gemaakt.
 
 ### Cross-organisatie trace context (W3C Trace Context)
 
-De `LogboekInterceptor` extraheert automatisch inkomende `traceparent`/`tracestate` headers, zodat een verwerking die door een andere organisatie is gestart in het eigen Logboek wordt voortgezet onder hetzelfde `trace_id`.
+De `LogboekInterceptor` extraheert automatisch inkomende `traceparent`/`tracestate` headers, zodat een verwerking die door een andere organisatie is gestart in het eigen Logboek wordt voortgezet onder hetzelfde `trace_id`. Geneste `@Logboek`-acties krijgen de omsluitende actie als parent; alleen de buitenste actie neemt de inkomende `traceparent` over.
 
 Voor de andere richting (uitgaande calls vanuit deze service naar een andere organisatie) registreer je `LogboekClientRequestFilter` op je JAX-RS / MicroProfile REST clients. De filter injecteert `traceparent` op elke uitgaande request op basis van de actieve OpenTelemetry-context:
 
@@ -249,6 +249,6 @@ De standaard vereist een aparte logregel per betrokkene. Voor het enkelvoudige g
 
 ### Contextvalidatie en het exception-pad
 
-Op het succespad is de validatie strikt: ontbreekt `processing_activity_id`, ontbreekt een betrokkene of is de activity-id geen absolute URI, dan gooit de enrichment een `IllegalArgumentException` vóór `span.end()`. Er wordt dan geen logregel geëxporteerd; de verwerking faalt luid in plaats van stil een onvolledige logregel te schrijven.
+Validatie breekt de verwerking nooit (LDV-standaard, foutafhandeling): ontbreekt `processing_activity_id`, ontbreekt een betrokkene of is de activity-id geen absolute URI, dan wordt dit als WARNING gelogd (met `trace_id:span_id`) en wordt de logregel geëxporteerd met de attributen die wél aanwezig zijn. Een lege `@Logboek`-naam valt terug op de methodenaam. Een logregel zonder betrokkene is toegestaan (de standaard staat 0 of 1 betrokkenen per logregel toe, bijvoorbeeld bij verwerkingen zonder persoonsgegevens); de warning helpt om vergeten context snel op te sporen.
 
-Gooit de geïntercepteerde methode zelf een exceptie, dan versoepelt de interceptor de validatie (`propagatingFailure`): een onvolledige context wordt als WARNING gelogd (met `trace_id:span_id`), de wél aanwezige attributen worden gezet en de logregel wordt geëxporteerd met status ERROR en de `exception.*`-attributen. Bij meerdere betrokkenen krijgen ook de child-logregels status ERROR. Dit is een bewuste afwijking van de regel dat elke logregel ten minste één betrokkene bevat: een onvolledige error-logregel is waardevoller dan geen logregel, en de oorspronkelijke exceptie mag nooit worden gemaskeerd door een validatiefout uit de logging zelf.
+Gooit de geïntercepteerde methode zelf een exceptie, dan wordt de logregel geëxporteerd met status ERROR en de `exception.*`-attributen; bij meerdere betrokkenen krijgen ook de child-logregels status ERROR. De oorspronkelijke exceptie wordt nooit gemaskeerd door een fout uit de logging zelf.

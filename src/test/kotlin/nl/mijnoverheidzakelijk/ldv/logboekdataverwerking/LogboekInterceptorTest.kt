@@ -10,6 +10,11 @@ import io.opentelemetry.api.trace.SpanBuilder
 import io.opentelemetry.api.trace.StatusCode
 import io.opentelemetry.api.trace.Tracer
 import io.opentelemetry.context.Scope
+import io.opentelemetry.sdk.OpenTelemetrySdk
+import io.opentelemetry.sdk.trace.ReadWriteSpan
+import io.opentelemetry.sdk.trace.ReadableSpan
+import io.opentelemetry.sdk.trace.SdkTracerProvider
+import io.opentelemetry.sdk.trace.SpanProcessor
 import jakarta.interceptor.InvocationContext
 import jakarta.ws.rs.core.HttpHeaders
 import jakarta.ws.rs.core.MultivaluedHashMap
@@ -146,15 +151,17 @@ internal class LogboekInterceptorTest {
         }
 
         @Test
-        fun `Throws when span name is empty`() {
+        fun `Empty span name falls back to the method name`() {
             // given
             val mockMethod = getEmptyNameMethod()
             every { mockInvocationContext.method } returns mockMethod
+            every { mockInvocationContext.proceed() } returns "result"
 
-            // when / then
-            assertThrows<IllegalArgumentException> {
-                interceptor.log(mockInvocationContext)
-            }
+            // when
+            interceptor.log(mockInvocationContext)
+
+            // then: LDV 3.3.2.1, an empty name is auto-filled, never a runtime error
+            verify { mockHandler.startSpan("emptyNameMethod", any()) }
         }
 
         @Test
@@ -303,6 +310,47 @@ internal class LogboekInterceptorTest {
             val thrown = assertThrows<IllegalStateException> { interceptor.log(mockInvocationContext) }
             assert(thrown === original)
             verify { mockSpan.end() }
+        }
+
+        @Test
+        fun `Nested action parents to the enclosing action, not the inbound traceparent`() {
+            // Real handler + real SDK so spans get real ids and context propagation.
+            val ended = mutableListOf<ReadableSpan>()
+            val provider = SdkTracerProvider.builder()
+                .addSpanProcessor(object : SpanProcessor {
+                    override fun onStart(parentContext: io.opentelemetry.context.Context, span: ReadWriteSpan) {}
+                    override fun isStartRequired(): Boolean = false
+                    override fun onEnd(span: ReadableSpan) {
+                        ended.add(span)
+                    }
+                    override fun isEndRequired(): Boolean = true
+                })
+                .build()
+            val sdk = OpenTelemetrySdk.builder().setTracerProvider(provider).build()
+            val realHandler = ProcessingHandler()
+            setPrivateField(realHandler, "openTelemetry", sdk)
+            setPrivateField(interceptor, "handler", realHandler)
+            every { mockHeaders.getHeaderString("traceparent") } returns
+                "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"
+
+            val outerCall = mockk<InvocationContext>()
+            val innerCall = mockk<InvocationContext>()
+            every { outerCall.method } returns getAnnotatedMethod()
+            every { innerCall.method } returns getAnnotatedMethod()
+            every { innerCall.proceed() } returns "inner"
+            every { outerCall.proceed() } answers { interceptor.log(innerCall) }
+
+            interceptor.log(outerCall)
+            sdk.close()
+
+            assert(ended.size == 2)
+            val inner = ended[0]
+            val outer = ended[1]
+            assert(outer.spanContext.traceId == "0af7651916cd43dd8448eb211c80319c")
+            assert(outer.parentSpanContext.spanId == "b7ad6b7169203331")
+            assert(inner.spanContext.traceId == outer.spanContext.traceId)
+            // The nested action's parent is the enclosing local action, not the remote caller.
+            assert(inner.parentSpanContext.spanId == outer.spanContext.spanId)
         }
 
         @Test

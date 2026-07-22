@@ -203,104 +203,59 @@ internal class ProcessingHandlerTest {
         }
 
         @Test
-        fun `Throws when processingActivityId is null`() {
+        fun `Missing processingActivityId is exported without the attribute`() {
             val logboekContext = LogboekContext().apply {
                 dataSubjectId = "subject-456"
                 dataSubjectType = "BSN"
+                status = StatusCode.OK
             }
 
-            assertThrows<IllegalArgumentException> {
-                handler.addLogboekContextToSpan(mockSpan, logboekContext)
-            }
+            handler.addLogboekContextToSpan(mockSpan, logboekContext)
+
+            // LDV 3.3.2.1: warn, never throw; the rest of the logregel still exports.
+            verify(inverse = true) { mockSpan.setAttribute("dpl.core.processing_activity_id", any<String>()) }
+            verify { mockSpan.setAttribute("dpl.core.data_subject_id", "subject-456") }
+            verify { mockSpan.setAttribute("dpl.core.data_subject_id_type", "BSN") }
+            verify { mockSpan.setStatus(StatusCode.OK) }
         }
 
         @Test
-        fun `Throws when processingActivityId is empty`() {
-            val logboekContext = LogboekContext().apply {
-                processingActivityId = ""
-                dataSubjectId = "subject-456"
-                dataSubjectType = "BSN"
-            }
-
-            assertThrows<IllegalArgumentException> {
-                handler.addLogboekContextToSpan(mockSpan, logboekContext)
-            }
-        }
-
-        @Test
-        fun `Throws when dataSubjectId is null`() {
+        fun `Half-set betrokkene pair applies only the present half`() {
             val logboekContext = LogboekContext().apply {
                 processingActivityId = "https://register.example.org/activiteiten/activity-123"
-                dataSubjectType = "BSN"
+                dataSubjectId = "subject-1"
             }
 
-            assertThrows<IllegalArgumentException> {
-                handler.addLogboekContextToSpan(mockSpan, logboekContext)
-            }
+            handler.addLogboekContextToSpan(mockSpan, logboekContext)
+
+            verify { mockSpan.setAttribute("dpl.core.data_subject_id", "subject-1") }
+            verify(inverse = true) { mockSpan.setAttribute("dpl.core.data_subject_id_type", any<String>()) }
         }
 
         @Test
-        fun `Throws when dataSubjectId is empty`() {
-            val logboekContext = LogboekContext().apply {
-                processingActivityId = "https://register.example.org/activiteiten/activity-123"
-                dataSubjectId = ""
-                dataSubjectType = "BSN"
-            }
-
-            assertThrows<IllegalArgumentException> {
-                handler.addLogboekContextToSpan(mockSpan, logboekContext)
-            }
-        }
-
-        @Test
-        fun `Throws when dataSubjectType is null`() {
-            val logboekContext = LogboekContext().apply {
-                processingActivityId = "https://register.example.org/activiteiten/activity-123"
-                dataSubjectId = "subject-456"
-            }
-
-            assertThrows<IllegalArgumentException> {
-                handler.addLogboekContextToSpan(mockSpan, logboekContext)
-            }
-        }
-
-        @Test
-        fun `Throws when dataSubjectType is empty`() {
-            val logboekContext = LogboekContext().apply {
-                processingActivityId = "https://register.example.org/activiteiten/activity-123"
-                dataSubjectId = "subject-456"
-                dataSubjectType = ""
-            }
-
-            assertThrows<IllegalArgumentException> {
-                handler.addLogboekContextToSpan(mockSpan, logboekContext)
-            }
-        }
-
-        @Test
-        fun `Throws when processingActivityId is not a valid URI`() {
+        fun `Invalid processingActivityId URI is exported as-is`() {
             val logboekContext = LogboekContext().apply {
                 processingActivityId = "not a valid uri {}"
                 dataSubjectId = "subject-456"
                 dataSubjectType = "BSN"
             }
 
-            assertThrows<IllegalArgumentException> {
-                handler.addLogboekContextToSpan(mockSpan, logboekContext)
-            }
+            handler.addLogboekContextToSpan(mockSpan, logboekContext)
+
+            verify { mockSpan.setAttribute("dpl.core.processing_activity_id", "not a valid uri {}") }
         }
 
         @Test
-        fun `Throws when processingActivityId is a relative URI`() {
+        fun `Relative processingActivityId is exported as-is`() {
             val logboekContext = LogboekContext().apply {
                 processingActivityId = "/activiteiten/activity-123"
                 dataSubjectId = "subject-456"
                 dataSubjectType = "BSN"
             }
 
-            assertThrows<IllegalArgumentException> {
-                handler.addLogboekContextToSpan(mockSpan, logboekContext)
-            }
+            handler.addLogboekContextToSpan(mockSpan, logboekContext)
+
+            verify { mockSpan.setAttribute("dpl.core.processing_activity_id", "/activiteiten/activity-123") }
         }
 
         @Test
@@ -363,68 +318,20 @@ internal class ProcessingHandlerTest {
         }
 
         @Test
-        fun `Throws when no betrokkene is present at all`() {
+        fun `No betrokkene exports the logregel without subject attributes`() {
+            // Valid per the standard (0 of 1 betrokkenen per logregel); warned so
+            // forgotten context in persoonsgegevens verwerkingen is still spotted.
             val logboekContext = LogboekContext().apply {
                 processingActivityId = "https://register.example.org/activiteiten/activity-123"
+                status = StatusCode.OK
             }
 
-            val e = assertThrows<IllegalArgumentException> {
-                handler.addLogboekContextToSpan(mockSpan, logboekContext)
-            }
-            assert(e.message!!.contains("data_subject_id is required"))
-        }
+            handler.addLogboekContextToSpan(mockSpan, logboekContext)
 
-        @Test
-        fun `Names the missing type when only the id is set`() {
-            val logboekContext = LogboekContext().apply {
-                processingActivityId = "https://register.example.org/activiteiten/activity-123"
-                dataSubjectId = "subject-1"
-            }
-
-            val e = assertThrows<IllegalArgumentException> {
-                handler.addLogboekContextToSpan(mockSpan, logboekContext)
-            }
-            assert(e.message!!.contains("data_subject_id_type is required"))
-        }
-
-        @Test
-        fun `Propagating failure does not throw when context is incomplete`() {
-            val logboekContext = LogboekContext().apply {
-                dataSubjectId = "subject-456"
-            }
-
-            handler.addLogboekContextToSpan(mockSpan, logboekContext, propagatingFailure = true)
-
-            // The present half of the pair is still applied; nothing throws.
-            verify { mockSpan.setAttribute("dpl.core.data_subject_id", "subject-456") }
-            verify(inverse = true) { mockSpan.setAttribute("dpl.core.processing_activity_id", any<String>()) }
+            verify { mockSpan.setAttribute("dpl.core.processing_activity_id", "https://register.example.org/activiteiten/activity-123") }
+            verify { mockSpan.setStatus(StatusCode.OK) }
+            verify(inverse = true) { mockSpan.setAttribute("dpl.core.data_subject_id", any<String>()) }
             verify(inverse = true) { mockSpan.setAttribute("dpl.core.data_subject_id_type", any<String>()) }
-        }
-
-        @Test
-        fun `Propagating failure does not validate processingActivityId as a URI`() {
-            val logboekContext = LogboekContext().apply {
-                processingActivityId = "not a valid uri {}"
-                dataSubjectId = "subject-456"
-                dataSubjectType = "BSN"
-            }
-
-            handler.addLogboekContextToSpan(mockSpan, logboekContext, propagatingFailure = true)
-
-            verify { mockSpan.setAttribute("dpl.core.processing_activity_id", "not a valid uri {}") }
-        }
-
-        @Test
-        fun `Propagating failure does not throw for a relative processingActivityId`() {
-            val logboekContext = LogboekContext().apply {
-                processingActivityId = "/activiteiten/activity-123"
-                dataSubjectId = "subject-456"
-                dataSubjectType = "BSN"
-            }
-
-            handler.addLogboekContextToSpan(mockSpan, logboekContext, propagatingFailure = true)
-
-            verify { mockSpan.setAttribute("dpl.core.processing_activity_id", "/activiteiten/activity-123") }
         }
 
         @Test
