@@ -14,6 +14,10 @@ import nl.mijnoverheidzakelijk.ldv.config.ConfigurationLoader
 import nl.mijnoverheidzakelijk.ldv.exporter.LdvSpanFilterProcessor
 import nl.mijnoverheidzakelijk.ldv.exporter.LogboekWriteFailureRecorder
 import java.util.Optional
+import java.util.logging.Handler
+import java.util.logging.Level
+import java.util.logging.LogRecord
+import java.util.logging.Logger
 import org.eclipse.microprofile.config.Config
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeAll
@@ -176,6 +180,41 @@ internal class ProcessingHandlerTest {
                 ProcessingHandler.buildLdvSpanProcessor()
             }
         }
+
+        @Test
+        fun `batch with fail-closed warns that the policy degrades to log-only`() {
+            every { cfg.getValue("logboekdataverwerking.enabled", Boolean::class.java) } returns true
+            every { cfg.getOptionalValue("logboekdataverwerking.dbms", String::class.java) } returns Optional.of("postgresql")
+            every {
+                cfg.getValue(match<String> { it.startsWith("logboekdataverwerking.postgresql.") }, String::class.java)
+            } returns "x"
+            every {
+                cfg.getOptionalValue("logboekdataverwerking.postgresql.connection-validation-timeout-seconds", String::class.java)
+            } returns Optional.empty()
+            every { cfg.getOptionalValue("logboekdataverwerking.span-processor", String::class.java) } returns Optional.of("batch")
+            every { cfg.getOptionalValue("logboekdataverwerking.write-failure-policy", String::class.java) } returns Optional.of("fail-closed")
+
+            val records = mutableListOf<LogRecord>()
+            val capture = object : Handler() {
+                override fun publish(record: LogRecord) { records.add(record) }
+                override fun flush() {}
+                override fun close() {}
+            }
+            val logger = Logger.getLogger(ProcessingHandler::class.java.name)
+            logger.addHandler(capture)
+            try {
+                // The exporter validates the schema at construction and fails on the
+                // dummy connection config; that happens after the warning, which is
+                // all this test is about, so the failure is tolerated.
+                runCatching { ProcessingHandler.buildLdvSpanProcessor() }
+            } finally {
+                logger.removeHandler(capture)
+            }
+
+            assert(records.any {
+                it.level == Level.WARNING && it.message.contains("fail-closed has no effect under span-processor=batch")
+            })
+        }
     }
 
     @Nested
@@ -286,7 +325,7 @@ internal class ProcessingHandlerTest {
             }
 
             // when
-            handler.addLogboekContextToSpan(mockSpan, logboekContext, propagatingFailure = true)
+            handler.addLogboekContextToSpan(mockSpan, logboekContext, propagatingException = RuntimeException("boom"))
 
             // then
             verify { mockSpan.setAttribute("dpl.core.processing_activity_id", "https://register.example.org/activiteiten/activity-123") }
@@ -335,19 +374,28 @@ internal class ProcessingHandlerTest {
         }
 
         @Test
-        fun `Propagating failure marks child logregels ERROR for multiple subjects`() {
+        fun `Propagating failure marks child logregels ERROR with exception attributes for multiple subjects`() {
+            every {
+                mockConfig.getOptionalValue("logboekdataverwerking.log-exception-stacktrace", String::class.java)
+            } returns Optional.empty()
             val logboekContext = LogboekContext().apply {
                 processingActivityId = "https://register.example.org/activiteiten/activity-123"
                 addSubject("subject-1", "BSN")
                 addSubject("subject-2", "KVK")
             }
 
-            handler.addLogboekContextToSpan(mockSpan, logboekContext, propagatingFailure = true)
+            handler.addLogboekContextToSpan(mockSpan, logboekContext, propagatingException = IllegalStateException("boom"))
 
-            // Child spans (the builder also returns mockSpan) each get ERROR; the parent's
-            // status stays untouched because the interceptor owns it on this path.
+            // Child spans (the builder also returns mockSpan) each get ERROR plus the
+            // exception attributes, so every per-betrokkene logregel carries the failure
+            // detail; the parent's status stays untouched because the interceptor owns
+            // it on this path.
             verify(exactly = 2) { mockTracer.spanBuilder("verwerking-betrokkene") }
             verify(exactly = 2) { mockSpan.setStatus(StatusCode.ERROR) }
+            verify(exactly = 2) { mockSpan.setAttribute("exception.type", "java.lang.IllegalStateException") }
+            verify(exactly = 2) { mockSpan.setAttribute("exception.message", "boom") }
+            // Stacktrace off by default (dataminimalisatie).
+            verify(inverse = true) { mockSpan.setAttribute("exception.stacktrace", any<String>()) }
             verify(inverse = true) { mockSpan.setStatus(StatusCode.UNSET) }
         }
     }

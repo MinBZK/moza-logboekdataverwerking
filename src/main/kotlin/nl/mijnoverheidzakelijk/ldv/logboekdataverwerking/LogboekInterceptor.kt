@@ -31,8 +31,13 @@ class LogboekInterceptor {
     private companion object {
         private val LOGGER: Logger = Logger.getLogger(LogboekInterceptor::class.java.name)
 
-        /** Marks the current context as inside an LDV action, so nested actions parent to it. */
-        private val LDV_ACTION: ContextKey<Boolean> = ContextKey.named("ldv-action")
+        /**
+         * Marks the current context as inside an LDV action, so nested actions parent
+         * to it. Carries the owning thread id: parenting follows the trace context
+         * (also across threads), but fail-closed enforcement follows the thread,
+         * because the write-failure recorder is thread-bound.
+         */
+        private val LDV_ACTION: ContextKey<Long> = ContextKey.named("ldv-action")
     }
 
     @Inject
@@ -52,13 +57,20 @@ class LogboekInterceptor {
      * it via the (possibly stale) status field on [LogboekContext].
      *
      * A nested [Logboek] action parents to the enclosing action; only the outermost
-     * action adopts an inbound `traceparent`.
+     * action adopts an inbound `traceparent`. The outermost action on each thread
+     * also owns the fail-closed acknowledgement: a nested action on the same thread
+     * leaves a write failure recorded instead of throwing, so the
+     * [LogboekWriteException] surfaces at the boundary and cannot be caught away or
+     * mistaken for a functional failure by business code in between. An action on
+     * another thread (with a propagated context) enforces on its own thread, because
+     * the failure recorder is thread-bound and would otherwise never be consumed.
      *
      * The finally block enriches the span via [ProcessingHandler.addLogboekContextToSpan],
      * which warns instead of throws on an incomplete [LogboekContext], so the logregel
      * export can never fail or replace the outcome of the intercepted method (LDV
-     * 3.3.2.1). `propagatingFailure = true` on the exception path keeps the ERROR status
-     * set above in place and marks per-betrokkene child logregels as ERROR.
+     * 3.3.2.1). Passing the caught exception on the exception path keeps the ERROR
+     * status set above in place and marks per-betrokkene child logregels as ERROR
+     * with the same `exception.*` attributes.
      *
      * @param context the invocation context
      * @return the result of the intercepted method
@@ -68,11 +80,19 @@ class LogboekInterceptor {
     @Throws(Exception::class)
     fun log(context: InvocationContext): Any? {
         val currentContext = io.opentelemetry.context.Context.current()
+        val markerThreadId = currentContext.get(LDV_ACTION)
+        // Parenting follows the trace: any enclosing action in the context, also one
+        // on another thread whose context was propagated, is the parent. Enforcement
+        // follows the thread (nestedOnThread): the recorder is thread-bound, so an
+        // action on a different thread must own the fail-closed check itself, or its
+        // write failure would be recorded where no boundary ever consumes it.
+        val nestedInTrace = markerThreadId != null
+        val nestedOnThread = markerThreadId == Thread.currentThread().threadId()
         // A nested @Logboek action parents to the enclosing local action (LDV: een actie
         // gestart door een andere actie neemt diens span_id op als parent_span_id). Only
         // the outermost action adopts an inbound traceparent: re-extracting it per
         // invocation would re-parent nested actions to the remote caller's span.
-        val traceContext = if (currentContext.get(LDV_ACTION) != null) {
+        val traceContext = if (nestedInTrace) {
             currentContext
         } else {
             W3CTraceContextPropagator.getInstance().extract(currentContext, headers, HttpHeadersGetter())
@@ -86,21 +106,25 @@ class LogboekInterceptor {
         }
         val processingActivityId = annotation.processingActivityId
 
-        // Drop any write failure left on this (pooled) thread by an earlier request, so
-        // the fail-closed check below only ever reacts to this verwerking's own writes.
-        LogboekWriteFailureRecorder.clear()
+        // The outermost action on this thread owns the recorder: it drops any failure
+        // left on this (pooled) thread by an earlier request, so the fail-closed check
+        // only reacts to this request's own writes. A nested action must not clear, or
+        // it would wipe a failure recorded by an earlier sibling action.
+        if (!nestedOnThread) {
+            LogboekWriteFailureRecorder.clear()
+        }
 
         val span = handler.startSpan(name, traceContext)
-        var caughtException = false
+        var caughtException: Exception? = null
 
         try {
-            traceContext.with(LDV_ACTION, true).makeCurrent().use { _ ->
+            traceContext.with(LDV_ACTION, Thread.currentThread().threadId()).makeCurrent().use { _ ->
                 span.makeCurrent().use { _ ->
                     return context.proceed()
                 }
             }
         } catch (e: Exception) {
-            caughtException = true
+            caughtException = e
             span.setStatus(StatusCode.ERROR, e.message ?: "")
             span.setAttribute("exception.type", e.javaClass.name)
             e.message?.let { span.setAttribute("exception.message", it) }
@@ -112,14 +136,22 @@ class LogboekInterceptor {
         } finally {
             logboekContext.processingActivityId = processingActivityId
             logboekContext.actionName = name
-            // On the exception path ERROR is already set; propagatingFailure skips
+            // On the exception path ERROR is already set; the propagating exception skips
             // re-applying status from the context (an optimistic OK would override it,
-            // OTel precedence: Ok > Error) and marks child logregels ERROR.
-            handler.addLogboekContextToSpan(span, logboekContext, propagatingFailure = caughtException)
+            // OTel precedence: Ok > Error) and marks child logregels ERROR with the
+            // exception attributes.
+            handler.addLogboekContextToSpan(span, logboekContext, propagatingException = caughtException)
             span.end()
+            // Fail-closed is enforced once per thread, by the outermost action on it,
+            // above all business code: a same-thread nested action leaves its write
+            // failure recorded, so business code in between cannot catch the
+            // LogboekWriteException away (silently defeating the guarantee) or mistake
+            // it for a functional failure of the nested action.
             // throwOnFailure=false on the exception path: a write failure must not mask
             // the business exception that is already propagating.
-            handler.enforceWriteAcknowledgement(throwOnFailure = !caughtException)
+            if (!nestedOnThread) {
+                handler.enforceWriteAcknowledgement(throwOnFailure = caughtException == null)
+            }
         }
     }
 

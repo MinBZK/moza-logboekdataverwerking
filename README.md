@@ -231,13 +231,17 @@ Kies je tóch `batch`, doe dat dan als bewuste, gedocumenteerde afweging. De sit
 - **`fail-closed`** (standaard): bij een schrijffout gooit de interceptor een `LogboekWriteException`, zodat een verwerking niet als afgerond-en-gelogd geldt terwijl de logregel niet is opgeslagen. Dit is de strikte lezing van de acknowledgement-MUST en koppelt het slagen van een verwerking aan de beschikbaarheid van het Logboek.
 - **`fail-open`**: de schrijffout wordt gelogd (SEVERE) en de verwerking gaat door.
 
-Afdwingen van `fail-closed` werkt alleen op de synchrone `simple`-processor: daar draait de export op dezelfde thread als de request, vlak voor het einde van de verwerking. Onder `batch` gebeurt de export op een achtergrond-thread en degradeert het beleid tot log-only. Alleen de standaardcombinatie `simple` + `fail-closed` voldoet aan de acknowledgement-MUST.
+Afdwingen van `fail-closed` werkt alleen op de synchrone `simple`-processor: daar draait de export op dezelfde thread als de request, vlak voor het einde van de verwerking. Onder `batch` gebeurt de export op een achtergrond-thread en degradeert het beleid tot log-only; de wrapper logt daarover een waarschuwing bij het opstarten. Alleen de standaardcombinatie `simple` + `fail-closed` voldoet aan de acknowledgement-MUST.
+
+`fail-closed` wordt éénmaal afgedwongen, door de **buitenste** `@Logboek`-actie. Een geneste actie gooit zelf niet: ze laat de schrijffout geregistreerd staan en rondt gewoon af, en pas nadat de buitenste actie klaar is gooit die de `LogboekWriteException`. Zo faalt de request als geheel zodra ergens in de keten een logregel niet is opgeslagen, terwijl businesscode tussen de acties de exceptie niet per ongeluk kan wegvangen (wat de garantie stilletjes zou uitschakelen) of kan aanzien voor een functionele fout van de geneste actie.
+
+De afdwinging is thread-gebonden: een `@Logboek`-actie die op een andere thread draait dan haar aanroeper dwingt het beleid daar zelf af, ook wanneer de OpenTelemetry-context is gepropageerd (die propagatie bepaalt alleen de parent-relatie van de logregel). De registratie van schrijffouten is namelijk per thread; uitstellen tot de buitenste actie zou de fout op een andere thread onzichtbaar maken. De keten-brede afdwinging op de buitenste actie geldt dus binnen één thread.
 
 Gaat een export mis, dan wordt zo veel mogelijk gered: het mappen van een span naar een databaserij gebeurt per span, dus één onverwerkbare span laat de rest van de batch niet sneuvelen. De insert zelf is wél alles-of-niets — een half weggeschreven batch is een niet te interpreteren logregel. In beide gevallen levert verlies een mislukte export op (dus `fail-closed` slaat aan) en worden de `trace_id:span_id` van de verloren logregels op SEVERE gelogd.
 
 ### Foutdetails en dataminimalisatie
 
-Error-logregels krijgen altijd `exception.type` en `exception.message`. De volledige `exception.stacktrace` wordt alleen opgeslagen als `logboekdataverwerking.log-exception-stacktrace=true`; standaard staat dit uit, omdat stacktraces groot zijn en persoonsgegevens kunnen bevatten (dataminimalisatie, AVG art. 5(1)(c)).
+Error-logregels krijgen altijd `exception.type` en `exception.message`; bij meerdere betrokkenen draagt iedere betrokkene-logregel dezelfde foutdata (conform de foutdata-velden uit de standaard). De volledige `exception.stacktrace` wordt alleen opgeslagen als `logboekdataverwerking.log-exception-stacktrace=true`; standaard staat dit uit, omdat stacktraces groot zijn en persoonsgegevens kunnen bevatten (dataminimalisatie, AVG art. 5(1)(c)). Houd om dezelfde reden persoonsgegevens buiten exception-messages: het bericht wordt ongefilterd in het Logboek opgeslagen, gekoppeld aan de betrokkene.
 
 ### Sampling
 

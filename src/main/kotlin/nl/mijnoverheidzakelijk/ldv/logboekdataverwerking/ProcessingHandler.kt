@@ -72,21 +72,23 @@ class ProcessingHandler {
      * [LogboekContext] field is logged as a warning (with `trace_id:span_id`) and
      * the logregel is exported with whatever attributes are present.
      *
-     * The [propagatingFailure] parameter tells this method that an exception from the
-     * intercepted method is already propagating. The span's own status is then left
-     * untouched (the interceptor has already set ERROR on it) and per-betrokkene child
-     * logregels get [StatusCode.ERROR] instead of [LogboekContext.status].
+     * The [propagatingException] parameter tells this method that an exception from
+     * the intercepted method is already propagating. The span's own status is then
+     * left untouched (the interceptor has already set ERROR and the `exception.*`
+     * attributes on it) and per-betrokkene child logregels get [StatusCode.ERROR]
+     * plus the same `exception.*` attributes, so every logregel of the failed
+     * verwerking carries the failure detail.
      *
-     * @param span               the span to enrich
-     * @param logboekContext     the context holding attributes
-     * @param propagatingFailure when true, skips applying [LogboekContext.status] to
-     *                           the span and marks child logregels as ERROR
+     * @param span                 the span to enrich
+     * @param logboekContext       the context holding attributes
+     * @param propagatingException the exception propagating from the intercepted
+     *                             method, or null on the success path
      */
     @JvmOverloads
     fun addLogboekContextToSpan(
         span: Span,
         logboekContext: LogboekContext,
-        propagatingFailure: Boolean = false
+        propagatingException: Throwable? = null
     ) {
         val processingActivityId = logboekContext.processingActivityId
         val subjects = logboekContext.effectiveSubjects()
@@ -96,7 +98,7 @@ class ProcessingHandler {
         if (!processingActivityId.isNullOrEmpty()) {
             span.setAttribute("dpl.core.processing_activity_id", processingActivityId)
         }
-        if (!propagatingFailure) {
+        if (propagatingException == null) {
             span.setStatus(logboekContext.status)
         }
 
@@ -105,7 +107,16 @@ class ProcessingHandler {
             // subject-less and each betrokkene becomes a child span.
             val parentContext = Context.root().with(span)
             val childName = logboekContext.actionName?.takeIf { it.isNotEmpty() } ?: CHILD_SPAN_NAME
-            val childStatus = if (propagatingFailure) StatusCode.ERROR else logboekContext.status
+            val childStatus = if (propagatingException != null) StatusCode.ERROR else logboekContext.status
+            // One exception per actie, shared by all children; computed once because
+            // rendering a stacktrace is not cheap. Mirrors the attributes the
+            // interceptor sets on the action span. Stacktraces are large and can
+            // embed persoonsgegevens; only stored on opt-in, same as the parent.
+            val exceptionType = propagatingException?.javaClass?.name
+            val exceptionMessage = propagatingException?.message
+            val exceptionStacktrace = propagatingException
+                ?.takeIf { ConfigurationLoader.logExceptionStacktrace }
+                ?.stackTraceToString()
             subjects.forEach { subject ->
                 val child = startSpan(childName, parentContext)
                 if (!processingActivityId.isNullOrEmpty()) {
@@ -113,6 +124,9 @@ class ProcessingHandler {
                 }
                 applySubject(child, subject)
                 child.setStatus(childStatus)
+                exceptionType?.let { child.setAttribute("exception.type", it) }
+                exceptionMessage?.let { child.setAttribute("exception.message", it) }
+                exceptionStacktrace?.let { child.setAttribute("exception.stacktrace", it) }
                 child.end()
             }
         } else if (subjects.size == 1) {
@@ -170,6 +184,10 @@ class ProcessingHandler {
      * Always consumes the recorded write failure so none lingers on a pooled thread.
      * When [throwOnFailure] and policy is `FAIL_CLOSED`, rethrows it so a verwerking
      * does not count as logged when its logregel was not stored.
+     *
+     * Called by the outermost `@Logboek` action only: nested actions leave their
+     * failure recorded, so the check runs at the request boundary where business
+     * code cannot swallow it.
      */
     @JvmOverloads
     fun enforceWriteAcknowledgement(throwOnFailure: Boolean = true) {
@@ -257,6 +275,17 @@ class ProcessingHandler {
                 }
             }
             val mode = ConfigurationLoader.spanProcessor
+            // Read unconditionally, so an invalid write-failure-policy value fails
+            // loud here at startup instead of at the first write failure.
+            val writeFailurePolicy = ConfigurationLoader.writeFailurePolicy
+            if (mode == ConfigurationLoader.SpanProcessorMode.BATCH &&
+                writeFailurePolicy == ConfigurationLoader.WriteFailurePolicy.FAIL_CLOSED
+            ) {
+                LOGGER.warning(
+                    "write-failure-policy=fail-closed has no effect under span-processor=batch: " +
+                        "spans are exported on a background thread, so write failures degrade to log-only"
+                )
+            }
             val exporter: SpanExporter = LdvSpanExporter(
                 repository,
                 relayWriteFailures = mode == ConfigurationLoader.SpanProcessorMode.SIMPLE,
