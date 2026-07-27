@@ -4,6 +4,7 @@ import io.opentelemetry.api.OpenTelemetry
 import io.opentelemetry.api.common.AttributeKey
 import io.opentelemetry.api.common.Attributes
 import io.opentelemetry.api.trace.Span
+import io.opentelemetry.api.trace.StatusCode
 import io.opentelemetry.api.trace.Tracer
 import io.opentelemetry.context.Context
 import io.opentelemetry.sdk.OpenTelemetrySdk
@@ -13,13 +14,13 @@ import io.opentelemetry.sdk.trace.SpanProcessor
 import io.opentelemetry.sdk.trace.export.BatchSpanProcessor
 import io.opentelemetry.sdk.trace.export.SimpleSpanProcessor
 import io.opentelemetry.sdk.trace.export.SpanExporter
+import io.opentelemetry.sdk.trace.samplers.Sampler
 import jakarta.annotation.PostConstruct
 import jakarta.enterprise.context.ApplicationScoped
-import jakarta.enterprise.inject.Instance
-import jakarta.inject.Inject
 import nl.mijnoverheidzakelijk.ldv.config.ConfigurationLoader
 import nl.mijnoverheidzakelijk.ldv.exporter.LdvSpanExporter
 import nl.mijnoverheidzakelijk.ldv.exporter.LdvSpanFilterProcessor
+import nl.mijnoverheidzakelijk.ldv.exporter.LogboekWriteFailureRecorder
 import nl.mijnoverheidzakelijk.ldv.repository.ClickHouseRepository
 import nl.mijnoverheidzakelijk.ldv.repository.PostgresRepository
 import nl.mijnoverheidzakelijk.ldv.repository.SpanRepository
@@ -27,31 +28,20 @@ import org.apache.commons.configuration2.ex.ConfigurationException
 import java.util.logging.Logger
 
 /**
- * Handles creation and enrichment of OpenTelemetry spans used by the Logboek
- * interceptor flow.
+ * Creates and enriches the OpenTelemetry spans used by the Logboek interceptor flow.
  *
- * When running inside a CDI container that provides an [OpenTelemetry] bean
- * (e.g. Quarkus with its OpenTelemetry extension), that instance is used
- * directly. Otherwise, a standalone SDK instance is created and managed
- * by this handler.
+ * Uses a dedicated SDK rather than a host-provided one (e.g. quarkus-opentelemetry):
+ * the host's sampler would otherwise be able to drop logregels, which the LDV spec
+ * forbids (MUST NOT use Log Sampling). See [initOpenTelemetry].
  */
 @ApplicationScoped
 class ProcessingHandler {
 
-    @Inject
-    private lateinit var openTelemetryInstance: Instance<OpenTelemetry>
-
-    private lateinit var openTelemetry: OpenTelemetry
+    internal lateinit var openTelemetry: OpenTelemetry
 
     @PostConstruct
     fun init() {
-        openTelemetry = if (openTelemetryInstance.isResolvable) {
-            LOGGER.info("Using container-provided OpenTelemetry instance")
-            openTelemetryInstance.get()
-        } else {
-            LOGGER.info("No container-provided OpenTelemetry found, creating standalone instance")
-            initOpenTelemetry()
-        }
+        openTelemetry = initOpenTelemetry()
     }
 
     /**
@@ -76,64 +66,134 @@ class ProcessingHandler {
     }
 
     /**
-     * Adds Logboek context attributes and (optionally) status to the given span.
+     * Adds Logboek context attributes and status to the given span.
      *
-     * The [setStatus] parameter exists so callers can apply attributes without
-     * overwriting a status that has already been set elsewhere. The interceptor
-     * uses this to preserve an ERROR set on the exception path against a stale
-     * OK that user code may have written to [LogboekContext] before throwing.
+     * Validation never breaks the verwerking (LDV 3.3.2.1): a missing or invalid
+     * [LogboekContext] field is logged as a warning (with `trace_id:span_id`) and
+     * the logregel is exported with whatever attributes are present.
      *
-     * The [requireCompleteContext] parameter controls whether an incomplete
-     * context throws. The interceptor sets this to false while another
-     * exception from the intercepted method is already propagating, so a
-     * method that failed before it could populate [LogboekContext] (e.g. a
-     * bean-validation error) doesn't have its exception replaced by one
-     * thrown from this method inside a finally block.
+     * The [propagatingException] parameter tells this method that an exception from
+     * the intercepted method is already propagating. The span's own status is then
+     * left untouched (the interceptor has already set ERROR and the `exception.*`
+     * attributes on it) and per-betrokkene child logregels get [StatusCode.ERROR]
+     * plus the same `exception.*` attributes, so every logregel of the failed
+     * verwerking carries the failure detail.
      *
-     * @param span                    the span to enrich
-     * @param logboekContext          the context holding attributes
-     * @param setStatus               when true (default), applies [LogboekContext.status]
-     *                                to the span via [Span.setStatus]
-     * @param requireCompleteContext  when true (default), throws [IllegalArgumentException]
-     *                                if [LogboekContext.processingActivityId], [LogboekContext.dataSubjectId],
-     *                                or [LogboekContext.dataSubjectType] are missing, or if
-     *                                [LogboekContext.processingActivityId] isn't a valid absolute URI. When
-     *                                false, an incomplete or invalid context is logged (via [isAbsoluteUri])
-     *                                instead of thrown, and whatever attributes are present are still applied.
+     * @param span                 the span to enrich
+     * @param logboekContext       the context holding attributes
+     * @param propagatingException the exception propagating from the intercepted
+     *                             method, or null on the success path
      */
     @JvmOverloads
     fun addLogboekContextToSpan(
         span: Span,
         logboekContext: LogboekContext,
-        setStatus: Boolean = true,
-        requireCompleteContext: Boolean = true
+        propagatingException: Throwable? = null
     ) {
         val processingActivityId = logboekContext.processingActivityId
-        val dataSubjectId = logboekContext.dataSubjectId
-        val dataSubjectType = logboekContext.dataSubjectType
+        val subjects = logboekContext.effectiveSubjects()
 
-        if (requireCompleteContext) {
-            require(!processingActivityId.isNullOrEmpty()) { "dpl.core.processing_activity_id is required by the LDV standard" }
-            require(!dataSubjectId.isNullOrEmpty()) { "dpl.core.data_subject_id is required by the LDV standard" }
-            require(!dataSubjectType.isNullOrEmpty()) { "dpl.core.data_subject_id_type is required by the LDV standard" }
+        warnOnIncompleteContext(span, logboekContext, subjects)
 
-            try {
-                val uri = java.net.URI(processingActivityId)
-                require(uri.isAbsolute) { "dpl.core.processing_activity_id must be an absolute URI: $processingActivityId" }
-            } catch (e: java.net.URISyntaxException) {
-                throw IllegalArgumentException("dpl.core.processing_activity_id must be a valid URI: $processingActivityId", e)
-            }
-        } else if (processingActivityId.isNullOrEmpty() || dataSubjectId.isNullOrEmpty() || dataSubjectType.isNullOrEmpty()) {
-            LOGGER.warning("Logboek context is incomplete; not enforced because another exception is already propagating")
-        } else if (!isAbsoluteUri(processingActivityId)) {
-            LOGGER.warning("dpl.core.processing_activity_id is not a valid absolute URI; not enforced because another exception is already propagating: $processingActivityId")
+        if (!processingActivityId.isNullOrEmpty()) {
+            span.setAttribute("dpl.core.processing_activity_id", processingActivityId)
+        }
+        if (propagatingException == null) {
+            span.setStatus(logboekContext.status)
         }
 
-        if (!processingActivityId.isNullOrEmpty()) span.setAttribute("dpl.core.processing_activity_id", processingActivityId)
-        if (!dataSubjectId.isNullOrEmpty()) span.setAttribute("dpl.core.data_subject_id", dataSubjectId)
-        if (!dataSubjectType.isNullOrEmpty()) span.setAttribute("dpl.core.data_subject_id_type", dataSubjectType)
-        if (setStatus) {
-            span.setStatus(logboekContext.status)
+        if (subjects.size > 1) {
+            // LDV requires a separate logregel per betrokkene; the action span stays
+            // subject-less and each betrokkene becomes a child span.
+            val parentContext = Context.root().with(span)
+            val childName = logboekContext.actionName?.takeIf { it.isNotEmpty() } ?: CHILD_SPAN_NAME
+            val childStatus = if (propagatingException != null) StatusCode.ERROR else logboekContext.status
+            // One exception per actie, shared by all children; computed once because
+            // rendering a stacktrace is not cheap. Mirrors the attributes the
+            // interceptor sets on the action span. Stacktraces are large and can
+            // embed persoonsgegevens; only stored on opt-in, same as the parent.
+            val exceptionType = propagatingException?.javaClass?.name
+            val exceptionMessage = propagatingException?.message
+            val exceptionStacktrace = propagatingException
+                ?.takeIf { ConfigurationLoader.logExceptionStacktrace }
+                ?.stackTraceToString()
+            subjects.forEach { subject ->
+                val child = startSpan(childName, parentContext)
+                if (!processingActivityId.isNullOrEmpty()) {
+                    child.setAttribute("dpl.core.processing_activity_id", processingActivityId)
+                }
+                applySubject(child, subject)
+                child.setStatus(childStatus)
+                exceptionType?.let { child.setAttribute("exception.type", it) }
+                exceptionMessage?.let { child.setAttribute("exception.message", it) }
+                exceptionStacktrace?.let { child.setAttribute("exception.stacktrace", it) }
+                child.end()
+            }
+        } else if (subjects.size == 1) {
+            applySubject(span, subjects[0])
+        } else {
+            // Half-set single pair: still apply what is present.
+            logboekContext.dataSubjectId?.takeIf { it.isNotEmpty() }
+                ?.let { span.setAttribute("dpl.core.data_subject_id", it) }
+            logboekContext.dataSubjectType?.takeIf { it.isNotEmpty() }
+                ?.let { span.setAttribute("dpl.core.data_subject_id_type", it) }
+        }
+    }
+
+    /**
+     * Warns (with the `trace_id:span_id`, so the incomplete logregel can be found
+     * back in the Logboek) for every required LDV field that is missing or invalid.
+     * Warns instead of throws: logging must never break the verwerking (LDV 3.3.2.1).
+     * A logregel without betrokkene is valid for niet-persoonsgegevens verwerkingen;
+     * the warning helps spot forgotten context.
+     */
+    private fun warnOnIncompleteContext(span: Span, logboekContext: LogboekContext, subjects: List<DataSubject>) {
+        val processingActivityId = logboekContext.processingActivityId
+        if (processingActivityId.isNullOrEmpty()) {
+            warnIncomplete(span, "dpl.core.processing_activity_id is missing")
+        } else if (!isAbsoluteUri(processingActivityId)) {
+            warnIncomplete(span, "dpl.core.processing_activity_id is not a valid absolute URI: $processingActivityId")
+        }
+        if (subjects.isEmpty()) {
+            if (!logboekContext.dataSubjectId.isNullOrEmpty()) {
+                warnIncomplete(span, "dpl.core.data_subject_id_type is missing")
+            } else if (!logboekContext.dataSubjectType.isNullOrEmpty()) {
+                warnIncomplete(span, "dpl.core.data_subject_id is missing")
+            } else {
+                warnIncomplete(span, "no betrokkene (dpl.core.data_subject_id/_type) is set")
+            }
+        } else {
+            subjects.forEach {
+                if (it.id.isEmpty()) warnIncomplete(span, "dpl.core.data_subject_id is empty for a betrokkene")
+                if (it.type.isEmpty()) warnIncomplete(span, "dpl.core.data_subject_id_type is empty for a betrokkene")
+            }
+        }
+    }
+
+    private fun warnIncomplete(span: Span, problem: String) {
+        val sc = span.spanContext
+        LOGGER.warning("$problem; the logregel is exported with incomplete context [${sc.traceId}:${sc.spanId}]")
+    }
+
+    private fun applySubject(span: Span, subject: DataSubject) {
+        if (subject.id.isNotEmpty()) span.setAttribute("dpl.core.data_subject_id", subject.id)
+        if (subject.type.isNotEmpty()) span.setAttribute("dpl.core.data_subject_id_type", subject.type)
+    }
+
+    /**
+     * Always consumes the recorded write failure so none lingers on a pooled thread.
+     * When [throwOnFailure] and policy is `FAIL_CLOSED`, rethrows it so a verwerking
+     * does not count as logged when its logregel was not stored.
+     *
+     * Called by the outermost `@Logboek` action only: nested actions leave their
+     * failure recorded, so the check runs at the request boundary where business
+     * code cannot swallow it.
+     */
+    @JvmOverloads
+    fun enforceWriteAcknowledgement(throwOnFailure: Boolean = true) {
+        val failure = LogboekWriteFailureRecorder.consume() ?: return
+        if (throwOnFailure && ConfigurationLoader.writeFailurePolicy == ConfigurationLoader.WriteFailurePolicy.FAIL_CLOSED) {
+            throw LogboekWriteException("Logregel kon niet in het Logboek worden opgeslagen", failure)
         }
     }
 
@@ -152,22 +212,27 @@ class ProcessingHandler {
     companion object {
         private val LOGGER: Logger = Logger.getLogger(ProcessingHandler::class.java.name)
 
+        /** Name for per-betrokkene logregels when the action carries no human-readable name. */
+        internal const val CHILD_SPAN_NAME: String = "verwerking-betrokkene"
+
         val serviceName: String by lazy { ConfigurationLoader.serviceName }
 
         /**
-         * Creates a standalone [OpenTelemetry] instance for use outside a CDI container.
+         * [Sampler.alwaysOn] so an inbound `traceparent` sampled-flag of `0` cannot drop
+         * logregels (LDV MUST NOT sample). Not registered globally, so it coexists with a
+         * host-provided OpenTelemetry.
          *
-         * @return the initialized [OpenTelemetry] instance
          * @throws ConfigurationException if exporter configuration cannot be read
          */
         @Throws(ConfigurationException::class)
         internal fun initOpenTelemetry(): OpenTelemetry {
-            LOGGER.info("Initializing standalone OpenTelemetry for service: $serviceName")
+            LOGGER.info("Initializing LDV OpenTelemetry for service: $serviceName")
 
             val resource = Resource.getDefault().merge(Resource.create(buildResourceAttributes()))
 
             val tracerProvider = SdkTracerProvider.builder()
                 .setResource(resource)
+                .setSampler(Sampler.alwaysOn())
                 .addSpanProcessor(buildLdvSpanProcessor())
                 .build()
 
@@ -185,25 +250,14 @@ class ProcessingHandler {
          * exporter selected via `logboekdataverwerking.dbms` (ClickHouse or
          * PostgreSQL) wrapped in the configured [SpanProcessor], then wrapped in
          * [LdvSpanFilterProcessor] so only LDV spans are exported. When disabled it
-         * returns a no-op processor, so the package contributes nothing to a host's
-         * SDK (no exporter, no worker thread, no per-span filtering).
-         *
-         * Shared by the standalone SDK path ([initOpenTelemetry]) and the CDI
-         * producer ([LdvSpanProcessorProducer]) so that fail-loud config
-         * validation and export behaviour are identical whether or not the host
-         * app provides its own OpenTelemetry (e.g. quarkus-opentelemetry). This
-         * method never creates an OpenTelemetry SDK, so it cannot introduce a
-         * second instance.
+         * returns a no-op processor, so the dedicated SDK does no work.
          *
          * @throws IllegalStateException if `enabled` but the selected backend's config is incomplete
          * @throws IllegalArgumentException if `logboekdataverwerking.dbms` is set to an unsupported value
          */
         internal fun buildLdvSpanProcessor(): SpanProcessor {
             if (!ConfigurationLoader.enabled) {
-                // Disabled: contribute nothing. This matters when the jar sits on a
-                // host's classpath alongside an OTel integration that collects
-                // SpanProcessor beans (e.g. quarkus-opentelemetry): with LDV off we
-                // must not attach a processor (or its worker thread) to the host SDK.
+                // Disabled: contribute nothing (no exporter, no worker thread).
                 return SpanProcessor.composite(emptyList())
             }
 
@@ -220,9 +274,24 @@ class ProcessingHandler {
                     PostgresRepository()
                 }
             }
-            val exporter: SpanExporter = LdvSpanExporter(repository)
+            val mode = ConfigurationLoader.spanProcessor
+            // Read unconditionally, so an invalid write-failure-policy value fails
+            // loud here at startup instead of at the first write failure.
+            val writeFailurePolicy = ConfigurationLoader.writeFailurePolicy
+            if (mode == ConfigurationLoader.SpanProcessorMode.BATCH &&
+                writeFailurePolicy == ConfigurationLoader.WriteFailurePolicy.FAIL_CLOSED
+            ) {
+                LOGGER.warning(
+                    "write-failure-policy=fail-closed has no effect under span-processor=batch: " +
+                        "spans are exported on a background thread, so write failures degrade to log-only"
+                )
+            }
+            val exporter: SpanExporter = LdvSpanExporter(
+                repository,
+                relayWriteFailures = mode == ConfigurationLoader.SpanProcessorMode.SIMPLE,
+            )
 
-            val delegate: SpanProcessor = when (ConfigurationLoader.spanProcessor) {
+            val delegate: SpanProcessor = when (mode) {
                 ConfigurationLoader.SpanProcessorMode.SIMPLE -> SimpleSpanProcessor.create(exporter)
                 ConfigurationLoader.SpanProcessorMode.BATCH -> BatchSpanProcessor.builder(exporter).build()
             }

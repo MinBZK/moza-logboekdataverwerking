@@ -35,9 +35,13 @@ logboekdataverwerking.dbms=clickhouse
 logboekdataverwerking.service-version=1.0.0
 logboekdataverwerking.deployment-environment=production
 
-# Span processor: 'batch' (standaard) of 'simple'.
+# Span processor: 'simple' (standaard, aanbevolen) of 'batch' (afgeraden, niet conform de acknowledgement-MUST).
 # Zie 'Span processor en acknowledgement' hieronder voor de trade-off.
-logboekdataverwerking.span-processor=batch
+logboekdataverwerking.span-processor=simple
+
+# Wat te doen als het Logboek een schrijfactie weigert: 'fail-closed' (standaard) of 'fail-open'.
+# Zie 'Span processor en acknowledgement' hieronder.
+logboekdataverwerking.write-failure-policy=fail-closed
 ```
 
 Configureer daarnaast **alleen de backend die je bij `dbms` koos** — niet beide. Bij `dbms=clickhouse`:
@@ -71,7 +75,8 @@ logboekdataverwerking:
     service-name: service-name
     service-version: 1.0.0
     deployment-environment: production
-    span-processor: batch
+    span-processor: simple
+    write-failure-policy: fail-closed
     dbms: clickhouse
     clickhouse:
         endpoint: http://localhost:8123
@@ -95,7 +100,7 @@ docker compose --profile clickhouse up -d    # standaard backend
 docker compose --profile postgresql up -d    # alternatieve backend
 ```
 
-> **Let op (geldt voor beide backends):** Bij een mislukte export worden de betreffende spans niet opnieuw aangeboden — geen enkele OpenTelemetry-spanprocessor (`batch` of `simple`) probeert een mislukte export opnieuw. Met de standaard `batch`-processor weet de applicatie bovendien niet óf de opslag is geslaagd. Voor een verwerkingenlogboek dat aan de LDV-acknowledgement-eis voldoet: gebruik `span-processor=simple`, zodat de applicatie synchroon ziet of de logregel is opgeslagen. Dat garandeert geen opslag bij een databasestoring, maar maakt een mislukking wél direct zichtbaar.
+> **Let op (geldt voor beide backends):** Bij een mislukte export worden de betreffende spans niet opnieuw aangeboden — geen enkele OpenTelemetry-spanprocessor (`batch` of `simple`) probeert een mislukte export opnieuw. De standaardcombinatie `span-processor=simple` + `write-failure-policy=fail-closed` voldoet aan de LDV-acknowledgement-eis: de applicatie ziet synchroon of de logregel is opgeslagen en laat de verwerking falen als dat niet zo is. Dat garandeert geen opslag bij een databasestoring, maar maakt een mislukking wél direct zichtbaar. Zet je `span-processor=batch`, dan weet de applicatie niet óf de opslag is geslaagd en degradeert `fail-closed` tot log-only.
 
 Hierna kun je endpoints voorzien van de `@Logboek()` annotatie:
 
@@ -176,7 +181,7 @@ Wanneer uitgeschakeld, worden er geen verbindingen met de database gemaakt.
 
 ### Cross-organisatie trace context (W3C Trace Context)
 
-De `LogboekInterceptor` extraheert automatisch inkomende `traceparent`/`tracestate` headers, zodat een verwerking die door een andere organisatie is gestart in het eigen Logboek wordt voortgezet onder hetzelfde `trace_id`.
+De `LogboekInterceptor` extraheert automatisch inkomende `traceparent`/`tracestate` headers, zodat een verwerking die door een andere organisatie is gestart in het eigen Logboek wordt voortgezet onder hetzelfde `trace_id`. Geneste `@Logboek`-acties krijgen de omsluitende actie als parent; alleen de buitenste actie neemt de inkomende `traceparent` over.
 
 Voor de andere richting (uitgaande calls vanuit deze service naar een andere organisatie) registreer je `LogboekClientRequestFilter` op je JAX-RS / MicroProfile REST clients. De filter injecteert `traceparent` op elke uitgaande request op basis van de actieve OpenTelemetry-context:
 
@@ -212,9 +217,42 @@ Het LDV-attribuut `dpl.core.foreign_operation.processor` identificeert de andere
 
 ### Span processor en acknowledgement
 
-De LDV-standaard stelt dat de applicatie moet kunnen weten dat een logregel daadwerkelijk is opgeslagen. Met OpenTelemetry zijn er twee gangbare processors:
+De LDV-standaard stelt dat de applicatie moet kunnen weten dat een logregel daadwerkelijk is opgeslagen. Dit wordt bepaald door twee instellingen die samenwerken.
 
-- **`batch`** (standaard): `BatchSpanProcessor`. Spans worden asynchroon in batches geëxporteerd. Hoogste throughput, laagste request-latency, maar de applicatie keert terug naar de aanroeper voordat de export bevestigd is. Bij een JVM-crash tussen response en flush kan een logregel verloren gaan.
-- **`simple`**: `SimpleSpanProcessor`. Elke span wordt synchroon geëxporteerd; de applicatie wacht op de bevestiging van ClickHouse voordat de request afrondt. Strikter conform de spec, maar verhoogt p99-latency en koppelt request-doorlooptijd aan de beschikbaarheid van het Logboek.
+**`span-processor`** kiest de OpenTelemetry-processor:
 
-Kies bewust per omgeving. Voor een initiële implementatie volstaat `batch`; overweeg `simple` zodra het Logboek productiekritisch en hoog-beschikbaar is.
+- **`simple`** (standaard, en de aanbevolen keuze): `SimpleSpanProcessor`. Elke span wordt synchroon geëxporteerd; de applicatie wacht op de bevestiging van de database voordat de request afrondt. Conform de acknowledgement-MUST, maar verhoogt p99-latency en koppelt request-doorlooptijd aan de beschikbaarheid van het Logboek.
+- **`batch`** (afgeraden): `BatchSpanProcessor`. Spans worden asynchroon in batches geëxporteerd. De applicatie keert terug naar de aanroeper vóórdat de export bevestigd is, dus **`batch` voldoet niet aan de acknowledgement-MUST**: bij een JVM-crash tussen response en flush gaat de logregel stil verloren, en `fail-closed` degradeert tot log-only.
+
+Kies je tóch `batch`, doe dat dan als bewuste, gedocumenteerde afweging. De situaties die dat rechtvaardigen zijn een hoog verwerkingsvolume of acties met veel betrokkenen: de standaard vereist een aparte logregel per betrokkene, dus onder `simple` doet een verwerking met N betrokkenen N+1 synchrone inserts binnen de request. Bij ClickHouse telt daarbij dat de engine op grote, gebundelde inserts is ontworpen; veel kleine losse inserts leggen merge-druk op de MergeTree-tabel.
+
+**`write-failure-policy`** bepaalt wat er gebeurt als de database een schrijfactie weigert:
+
+- **`fail-closed`** (standaard): bij een schrijffout gooit de interceptor een `LogboekWriteException`, zodat een verwerking niet als afgerond-en-gelogd geldt terwijl de logregel niet is opgeslagen. Dit is de strikte lezing van de acknowledgement-MUST en koppelt het slagen van een verwerking aan de beschikbaarheid van het Logboek.
+- **`fail-open`**: de schrijffout wordt gelogd (SEVERE) en de verwerking gaat door.
+
+Afdwingen van `fail-closed` werkt alleen op de synchrone `simple`-processor: daar draait de export op dezelfde thread als de request, vlak voor het einde van de verwerking. Onder `batch` gebeurt de export op een achtergrond-thread en degradeert het beleid tot log-only; de wrapper logt daarover een waarschuwing bij het opstarten. Alleen de standaardcombinatie `simple` + `fail-closed` voldoet aan de acknowledgement-MUST.
+
+`fail-closed` wordt éénmaal afgedwongen, door de **buitenste** `@Logboek`-actie. Een geneste actie gooit zelf niet: ze laat de schrijffout geregistreerd staan en rondt gewoon af, en pas nadat de buitenste actie klaar is gooit die de `LogboekWriteException`. Zo faalt de request als geheel zodra ergens in de keten een logregel niet is opgeslagen, terwijl businesscode tussen de acties de exceptie niet per ongeluk kan wegvangen (wat de garantie stilletjes zou uitschakelen) of kan aanzien voor een functionele fout van de geneste actie.
+
+De afdwinging is thread-gebonden: een `@Logboek`-actie die op een andere thread draait dan haar aanroeper dwingt het beleid daar zelf af, ook wanneer de OpenTelemetry-context is gepropageerd (die propagatie bepaalt alleen de parent-relatie van de logregel). De registratie van schrijffouten is namelijk per thread; uitstellen tot de buitenste actie zou de fout op een andere thread onzichtbaar maken. De keten-brede afdwinging op de buitenste actie geldt dus binnen één thread.
+
+Gaat een export mis, dan wordt zo veel mogelijk gered: het mappen van een span naar een databaserij gebeurt per span, dus één onverwerkbare span laat de rest van de batch niet sneuvelen. De insert zelf is wél alles-of-niets — een half weggeschreven batch is een niet te interpreteren logregel. In beide gevallen levert verlies een mislukte export op (dus `fail-closed` slaat aan) en worden de `trace_id:span_id` van de verloren logregels op SEVERE gelogd.
+
+### Foutdetails en dataminimalisatie
+
+Error-logregels krijgen altijd `exception.type` en `exception.message`; bij meerdere betrokkenen draagt iedere betrokkene-logregel dezelfde foutdata (conform de foutdata-velden uit de standaard). De volledige `exception.stacktrace` wordt alleen opgeslagen als `logboekdataverwerking.log-exception-stacktrace=true`; standaard staat dit uit, omdat stacktraces groot zijn en persoonsgegevens kunnen bevatten (dataminimalisatie, AVG art. 5(1)(c)). Houd om dezelfde reden persoonsgegevens buiten exception-messages: het bericht wordt ongefilterd in het Logboek opgeslagen, gekoppeld aan de betrokkene.
+
+### Sampling
+
+LDV-spans gebruiken altijd een eigen, toegewijde OpenTelemetry-SDK met een `AlwaysOn`-sampler, ook wanneer de host-applicatie zelf een OpenTelemetry-SDK levert (bijv. `quarkus-opentelemetry`). Dit voorkomt dat logregels worden weggesampled door de sampler van de host of door een inkomende `traceparent` met sampled-flag `0`, wat in strijd zou zijn met de LDV-eis dat Log Sampling niet is toegestaan. De toegewijde SDK wordt niet globaal geregistreerd en bestaat naast een eventuele host-SDK; tracecontext blijft propageren omdat de W3C-propagator en OTel-`Context` SDK-onafhankelijk zijn.
+
+### Meerdere betrokkenen
+
+De standaard vereist een aparte logregel per betrokkene. Voor het enkelvoudige geval zet je `dataSubjectId`/`dataSubjectType` op de `LogboekContext`. Verwerk je meerdere betrokkenen in één actie (bijv. een batch), gebruik dan `logboekContext.addSubject(id, type)` per betrokkene: de interceptor maakt dan één child-logregel per betrokkene onder de actie-span, met hetzelfde `trace_id`.
+
+### Contextvalidatie en het exception-pad
+
+Validatie breekt de verwerking nooit (LDV-standaard, foutafhandeling): ontbreekt `processing_activity_id`, ontbreekt een betrokkene of is de activity-id geen absolute URI, dan wordt dit als WARNING gelogd (met `trace_id:span_id`) en wordt de logregel geëxporteerd met de attributen die wél aanwezig zijn. Een lege `@Logboek`-naam valt terug op de methodenaam. Een logregel zonder betrokkene is toegestaan (de standaard staat 0 of 1 betrokkenen per logregel toe, bijvoorbeeld bij verwerkingen zonder persoonsgegevens); de warning helpt om vergeten context snel op te sporen.
+
+Gooit de geïntercepteerde methode zelf een exceptie, dan wordt de logregel geëxporteerd met status ERROR en de `exception.*`-attributen; bij meerdere betrokkenen krijgen ook de child-logregels status ERROR. De oorspronkelijke exceptie wordt nooit gemaskeerd door een fout uit de logging zelf.

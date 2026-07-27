@@ -4,20 +4,62 @@ import io.opentelemetry.api.trace.StatusCode
 import jakarta.enterprise.context.RequestScoped
 
 /**
+ * Een betrokkene bij een verwerking.
+ *
+ * @property id   Versleuteld of gepseudonimiseerd ID van de betrokkene.
+ *                Mag NOOIT een onversleuteld BSN of direct identificerend gegeven bevatten.
+ * @property type Type identificatie (bijv. "BSN", "KVK", "personeelsnummer").
+ */
+data class DataSubject(val id: String, val type: String)
+
+/**
  * Request-scoped holder for LogboekDataverwerking-related context data that will be attached to spans.
- * This includes identifiers for the processing activity, data subject, and the span status.
+ * This includes the processing activity, the data subject(s), and the span status.
  */
 @RequestScoped
 class LogboekContext {
     var processingActivityId: String? = null
+
     /**
      * Versleuteld of gepseudonimiseerd ID van de betrokkene.
      * Mag NOOIT een onversleuteld BSN of direct identificerend gegeven bevatten.
-     * Zie de LDV standaard: https://logius-standaarden.github.io/logboek-dataverwerkingen/
+     * Zie de LDV standaard: https://gitdocumentatie.logius.nl/publicatie/logboek/dataverwerkingen/1.0.0/
+     *
+     * Sugar voor het enkelvoudige geval. Bij meerdere betrokkenen: gebruik [addSubject]
+     * zodat de standaard een aparte logregel per betrokkene afdwingt (MUST).
      */
     var dataSubjectId: String? = null
 
     var dataSubjectType: String? = null
 
     var status: StatusCode = StatusCode.UNSET
+
+    /**
+     * Mensleesbare actienaam, gezet door de interceptor. Wordt hergebruikt als naam
+     * voor de per-betrokkene logregels bij meerdere betrokkenen.
+     */
+    var actionName: String? = null
+
+    /**
+     * Betrokkenen bij deze verwerking. Wanneer deze lijst gevuld is, krijgt elke
+     * betrokkene een eigen logregel; de enkelvoudige [dataSubjectId]/[dataSubjectType]
+     * worden dan genegeerd.
+     */
+    val subjects: MutableList<DataSubject> = mutableListOf()
+
+    /** Voegt een betrokkene toe; gebruik dit bij verwerkingen met meerdere betrokkenen. */
+    fun addSubject(id: String, type: String) {
+        subjects.add(DataSubject(id, type))
+    }
+
+    /**
+     * De effectieve betrokkenen: de expliciete [subjects] indien gevuld, anders het
+     * enkelvoudige [dataSubjectId]/[dataSubjectType] paar als dat gezet is, anders leeg.
+     */
+    fun effectiveSubjects(): List<DataSubject> {
+        if (subjects.isNotEmpty()) return subjects.toList()
+        val id = dataSubjectId
+        val type = dataSubjectType
+        return if (id != null && type != null) listOf(DataSubject(id, type)) else emptyList()
+    }
 }

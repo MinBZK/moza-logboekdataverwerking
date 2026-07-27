@@ -4,13 +4,22 @@ import io.mockk.clearAllMocks
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.verify
+import io.opentelemetry.api.OpenTelemetry
 import io.opentelemetry.api.trace.Span
+import io.opentelemetry.api.trace.SpanBuilder
 import io.opentelemetry.api.trace.StatusCode
+import io.opentelemetry.api.trace.Tracer
 import io.opentelemetry.context.Scope
+import io.opentelemetry.sdk.OpenTelemetrySdk
+import io.opentelemetry.sdk.trace.ReadWriteSpan
+import io.opentelemetry.sdk.trace.ReadableSpan
+import io.opentelemetry.sdk.trace.SdkTracerProvider
+import io.opentelemetry.sdk.trace.SpanProcessor
 import jakarta.interceptor.InvocationContext
 import jakarta.ws.rs.core.HttpHeaders
 import jakarta.ws.rs.core.MultivaluedHashMap
 import nl.mijnoverheidzakelijk.ldv.config.ConfigurationLoader
+import nl.mijnoverheidzakelijk.ldv.exporter.LogboekWriteFailureRecorder
 import org.eclipse.microprofile.config.Config
 import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.AfterEach
@@ -23,6 +32,7 @@ import org.junit.jupiter.api.TestInstance
 import org.junit.jupiter.api.assertThrows
 import java.lang.reflect.Field
 import java.lang.reflect.Method
+import java.util.Optional
 
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 internal class LogboekInterceptorTest {
@@ -77,6 +87,12 @@ internal class LogboekInterceptorTest {
         every { mockSpan.makeCurrent() } returns mockScope
         every { mockHeaders.requestHeaders } returns MultivaluedHashMap()
         every { mockHeaders.getHeaderString(any()) } returns null
+
+        // Re-stub each test: clearAllMocks() in tearDown wipes it, and the interceptor
+        // reads this on the exception path. Default off.
+        every {
+            mockConfig.getOptionalValue("logboekdataverwerking.log-exception-stacktrace", String::class.java)
+        } returns Optional.empty()
     }
 
     @AfterEach
@@ -129,22 +145,24 @@ internal class LogboekInterceptorTest {
             verify { mockHandler.startSpan("test-span", any()) }
             verify { mockSpan.makeCurrent() }
             verify { mockInvocationContext.proceed() }
-            verify { mockHandler.addLogboekContextToSpan(mockSpan, mockLogboekContext, true, true) }
+            verify { mockHandler.addLogboekContextToSpan(mockSpan, mockLogboekContext, null) }
             verify { mockSpan.end() }
             assert(result == "result")
             assert(mockLogboekContext.processingActivityId == "https://register.example.org/activiteiten/activity-123")
         }
 
         @Test
-        fun `Throws when span name is empty`() {
+        fun `Empty span name falls back to the method name`() {
             // given
             val mockMethod = getEmptyNameMethod()
             every { mockInvocationContext.method } returns mockMethod
+            every { mockInvocationContext.proceed() } returns "result"
 
-            // when / then
-            assertThrows<IllegalArgumentException> {
-                interceptor.log(mockInvocationContext)
-            }
+            // when
+            interceptor.log(mockInvocationContext)
+
+            // then: LDV 3.3.2.1, an empty name is auto-filled, never a runtime error
+            verify { mockHandler.startSpan("emptyNameMethod", any()) }
         }
 
         @Test
@@ -162,12 +180,11 @@ internal class LogboekInterceptorTest {
 
             assert(thrown == testException)
             verify { mockSpan.setStatus(StatusCode.ERROR, "Test exception") }
-            // setStatus = false: the interceptor must not let addLogboekContextToSpan
-            // re-apply status from LogboekContext on the exception path, otherwise an
-            // optimistic OK written by user code before the throw would mask the ERROR.
-            // requireCompleteContext = false: an incomplete LogboekContext (e.g. because
-            // the method body never ran) must not throw here and replace testException.
-            verify { mockHandler.addLogboekContextToSpan(mockSpan, mockLogboekContext, false, false) }
+            // The propagating exception is passed along: status must not be re-applied
+            // from LogboekContext (an optimistic OK written by user code before the throw
+            // would mask the ERROR) and an incomplete LogboekContext (e.g. because the
+            // method body never ran) must not throw here and replace testException.
+            verify { mockHandler.addLogboekContextToSpan(mockSpan, mockLogboekContext, testException) }
             verify { mockSpan.end() }
         }
 
@@ -176,16 +193,17 @@ internal class LogboekInterceptorTest {
             // given
             val mockMethod = getAnnotatedMethod()
             mockLogboekContext.status = StatusCode.OK
+            val kaboom = RuntimeException("kaboom")
             every { mockInvocationContext.method } returns mockMethod
-            every { mockInvocationContext.proceed() } throws RuntimeException("kaboom")
+            every { mockInvocationContext.proceed() } throws kaboom
 
             // when / then
             assertThrows<RuntimeException> { interceptor.log(mockInvocationContext) }
 
             verify { mockSpan.setStatus(StatusCode.ERROR, "kaboom") }
-            verify { mockHandler.addLogboekContextToSpan(mockSpan, mockLogboekContext, false, false) }
-            // setStatus(OK) from addLogboekContextToSpan would otherwise be locked-in by OTel
-            // and prevent the ERROR set in the catch from sticking.
+            verify { mockHandler.addLogboekContextToSpan(mockSpan, mockLogboekContext, kaboom) }
+            // Without the propagating exception, setStatus(OK) from addLogboekContextToSpan
+            // would be locked-in by OTel and prevent the ERROR set in the catch from sticking.
         }
 
         @Test
@@ -218,6 +236,237 @@ internal class LogboekInterceptorTest {
             assert(thrown === expectedException) { "Expected the original exception to be rethrown" }
             assert(thrown.message == "Test exception message") { "Exception message should be preserved" }
             verify { mockSpan.end() }
+        }
+
+        @Test
+        fun `Success path enforces write acknowledgement (throwing) after ending span`() {
+            // given
+            val mockMethod = getAnnotatedMethod()
+            every { mockInvocationContext.method } returns mockMethod
+            every { mockInvocationContext.proceed() } returns "result"
+
+            // when
+            interceptor.log(mockInvocationContext)
+
+            // then
+            verify { mockSpan.end() }
+            verify { mockHandler.enforceWriteAcknowledgement(throwOnFailure = true) }
+        }
+
+        @Test
+        fun `Exception path records type and message but enforces without throwing`() {
+            // given
+            val mockMethod = getAnnotatedMethod()
+            every { mockInvocationContext.method } returns mockMethod
+            every { mockInvocationContext.proceed() } throws IllegalStateException("boom")
+
+            // when / then
+            assertThrows<IllegalStateException> { interceptor.log(mockInvocationContext) }
+
+            verify { mockSpan.setAttribute("exception.type", "java.lang.IllegalStateException") }
+            verify { mockSpan.setAttribute("exception.message", "boom") }
+            // throwOnFailure=false so a write failure cannot mask the business exception.
+            verify { mockHandler.enforceWriteAcknowledgement(throwOnFailure = false) }
+            // Stacktrace off by default (dataminimalisatie).
+            verify(inverse = true) { mockSpan.setAttribute("exception.stacktrace", any<String>()) }
+        }
+
+        @Test
+        fun `Stacktrace is recorded only when explicitly enabled`() {
+            // given
+            every {
+                mockConfig.getOptionalValue("logboekdataverwerking.log-exception-stacktrace", String::class.java)
+            } returns Optional.of("true")
+            val mockMethod = getAnnotatedMethod()
+            every { mockInvocationContext.method } returns mockMethod
+            every { mockInvocationContext.proceed() } throws IllegalStateException("boom")
+
+            // when / then
+            assertThrows<IllegalStateException> { interceptor.log(mockInvocationContext) }
+
+            verify { mockSpan.setAttribute("exception.stacktrace", any<String>()) }
+        }
+
+        @Test
+        fun `Original exception reaches the caller when context was never populated`() {
+            // Real ProcessingHandler (with a mocked OpenTelemetry) instead of the relaxed
+            // mock, so the enrichment in the finally block actually runs its validation.
+            val realHandler = ProcessingHandler()
+            val otel = mockk<OpenTelemetry>()
+            val tracer = mockk<Tracer>()
+            val spanBuilder = mockk<SpanBuilder>()
+            every { otel.getTracer(any()) } returns tracer
+            every { tracer.spanBuilder(any()) } returns spanBuilder
+            every { spanBuilder.setParent(any()) } returns spanBuilder
+            every { spanBuilder.startSpan() } returns mockSpan
+            setPrivateField(realHandler, "openTelemetry", otel)
+            setPrivateField(interceptor, "handler", realHandler)
+
+            val mockMethod = getAnnotatedMethod()
+            every { mockInvocationContext.method } returns mockMethod
+            val original = IllegalStateException("business failure")
+            every { mockInvocationContext.proceed() } throws original
+
+            // when / then: the never-populated LogboekContext must not produce an
+            // IllegalArgumentException that replaces the business exception.
+            val thrown = assertThrows<IllegalStateException> { interceptor.log(mockInvocationContext) }
+            assert(thrown === original)
+            verify { mockSpan.end() }
+        }
+
+        @Test
+        fun `Nested action parents to the enclosing action, not the inbound traceparent`() {
+            // Real handler + real SDK so spans get real ids and context propagation.
+            val ended = mutableListOf<ReadableSpan>()
+            val provider = SdkTracerProvider.builder()
+                .addSpanProcessor(object : SpanProcessor {
+                    override fun onStart(parentContext: io.opentelemetry.context.Context, span: ReadWriteSpan) {}
+                    override fun isStartRequired(): Boolean = false
+                    override fun onEnd(span: ReadableSpan) {
+                        ended.add(span)
+                    }
+                    override fun isEndRequired(): Boolean = true
+                })
+                .build()
+            val sdk = OpenTelemetrySdk.builder().setTracerProvider(provider).build()
+            val realHandler = ProcessingHandler()
+            setPrivateField(realHandler, "openTelemetry", sdk)
+            setPrivateField(interceptor, "handler", realHandler)
+            every { mockHeaders.getHeaderString("traceparent") } returns
+                "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"
+
+            val outerCall = mockk<InvocationContext>()
+            val innerCall = mockk<InvocationContext>()
+            every { outerCall.method } returns getAnnotatedMethod()
+            every { innerCall.method } returns getAnnotatedMethod()
+            every { innerCall.proceed() } returns "inner"
+            every { outerCall.proceed() } answers { interceptor.log(innerCall) }
+
+            interceptor.log(outerCall)
+            sdk.close()
+
+            assert(ended.size == 2)
+            val inner = ended[0]
+            val outer = ended[1]
+            assert(outer.spanContext.traceId == "0af7651916cd43dd8448eb211c80319c")
+            assert(outer.parentSpanContext.spanId == "b7ad6b7169203331")
+            assert(inner.spanContext.traceId == outer.spanContext.traceId)
+            // The nested action's parent is the enclosing local action, not the remote caller.
+            assert(inner.parentSpanContext.spanId == outer.spanContext.spanId)
+        }
+
+        @Test
+        fun `Nested write failure is enforced at the outermost action, not inside business code`() {
+            every {
+                mockConfig.getOptionalValue("logboekdataverwerking.write-failure-policy", String::class.java)
+            } returns Optional.of("fail-closed")
+            // Real handler + real SDK so nesting uses real context propagation.
+            val sdk = OpenTelemetrySdk.builder().setTracerProvider(SdkTracerProvider.builder().build()).build()
+            val realHandler = ProcessingHandler()
+            setPrivateField(realHandler, "openTelemetry", sdk)
+            setPrivateField(interceptor, "handler", realHandler)
+
+            val outerCall = mockk<InvocationContext>()
+            val innerCall = mockk<InvocationContext>()
+            every { outerCall.method } returns getAnnotatedMethod()
+            every { innerCall.method } returns getAnnotatedMethod()
+            every { innerCall.proceed() } answers {
+                // Simulates the exporter recording a failed logregel write for the
+                // nested action on this thread.
+                LogboekWriteFailureRecorder.record(RuntimeException("clickhouse down"))
+                "inner"
+            }
+            var innerResult: Any? = null
+            var outerBusinessCompleted = false
+            every { outerCall.proceed() } answers {
+                innerResult = interceptor.log(innerCall)
+                outerBusinessCompleted = true
+                "outer"
+            }
+
+            // when / then: the failure surfaces only at the request boundary.
+            assertThrows<LogboekWriteException> { interceptor.log(outerCall) }
+
+            // The nested action returned normally and the outer business code ran to
+            // completion; nothing threw inside business code where a catch-block could
+            // have swallowed the guarantee.
+            assert(innerResult == "inner")
+            assert(outerBusinessCompleted)
+        }
+
+        @Test
+        fun `Nested action does not wipe a failure recorded by an earlier sibling`() {
+            every {
+                mockConfig.getOptionalValue("logboekdataverwerking.write-failure-policy", String::class.java)
+            } returns Optional.of("fail-closed")
+            val sdk = OpenTelemetrySdk.builder().setTracerProvider(SdkTracerProvider.builder().build()).build()
+            val realHandler = ProcessingHandler()
+            setPrivateField(realHandler, "openTelemetry", sdk)
+            setPrivateField(interceptor, "handler", realHandler)
+
+            val outerCall = mockk<InvocationContext>()
+            val failingSibling = mockk<InvocationContext>()
+            val succeedingSibling = mockk<InvocationContext>()
+            every { outerCall.method } returns getAnnotatedMethod()
+            every { failingSibling.method } returns getAnnotatedMethod()
+            every { succeedingSibling.method } returns getAnnotatedMethod()
+            every { failingSibling.proceed() } answers {
+                LogboekWriteFailureRecorder.record(RuntimeException("clickhouse down"))
+                "first"
+            }
+            every { succeedingSibling.proceed() } returns "second"
+            every { outerCall.proceed() } answers {
+                interceptor.log(failingSibling)
+                // A second sibling must not clear the recorder on entry, or the first
+                // sibling's failure would be lost and the request would report success.
+                interceptor.log(succeedingSibling)
+                "outer"
+            }
+
+            assertThrows<LogboekWriteException> { interceptor.log(outerCall) }
+        }
+
+        @Test
+        fun `Action on another thread with propagated context enforces on its own thread`() {
+            every {
+                mockConfig.getOptionalValue("logboekdataverwerking.write-failure-policy", String::class.java)
+            } returns Optional.of("fail-closed")
+            val sdk = OpenTelemetrySdk.builder().setTracerProvider(SdkTracerProvider.builder().build()).build()
+            val realHandler = ProcessingHandler()
+            setPrivateField(realHandler, "openTelemetry", sdk)
+            setPrivateField(interceptor, "handler", realHandler)
+
+            val outerCall = mockk<InvocationContext>()
+            val innerCall = mockk<InvocationContext>()
+            every { outerCall.method } returns getAnnotatedMethod()
+            every { innerCall.method } returns getAnnotatedMethod()
+            every { innerCall.proceed() } answers {
+                LogboekWriteFailureRecorder.record(RuntimeException("clickhouse down"))
+                "inner"
+            }
+            var onWorkerThread: Throwable? = null
+            every { outerCall.proceed() } answers {
+                // Propagates the OTel context to a worker thread, like context-propagating
+                // executors do. The recorder is thread-bound, so the worker must enforce
+                // fail-closed itself; deferring to the outer action would silently lose
+                // the failure.
+                val propagated = io.opentelemetry.context.Context.current()
+                val worker = Thread {
+                    propagated.makeCurrent().use { _ ->
+                        onWorkerThread = runCatching { interceptor.log(innerCall) }.exceptionOrNull()
+                    }
+                }
+                worker.start()
+                worker.join()
+                "outer"
+            }
+
+            // The outer action completes normally: the failure was enforced on the
+            // worker thread, not deferred to a boundary that cannot see it.
+            val result = interceptor.log(outerCall)
+
+            assert(result == "outer")
+            assert(onWorkerThread is LogboekWriteException)
         }
 
         @Test

@@ -18,11 +18,15 @@ import java.util.logging.Logger
  *
  * On construction it ensures the target schema exists. A failed export is NOT
  * retried — no OpenTelemetry span processor re-offers a failed batch — so a
- * failure logs the lost records' `traceId:spanId` to keep them traceable.
+ * failure logs the lost records' `traceId:spanId` to keep them traceable and
+ * [export] salvages whatever of the batch it still can.
  */
 class LdvSpanExporter(
     private val repository: SpanRepository,
     private val maxLoggedSpanIds: Int = DEFAULT_MAX_LOGGED_SPAN_IDS,
+    // Off under BATCH: export then runs on the worker thread, where the recorder is
+    // never consumed and recording would only pin the Throwable in its ThreadLocal.
+    private val relayWriteFailures: Boolean = true,
 ) : SpanExporter {
 
     init {
@@ -32,39 +36,71 @@ class LdvSpanExporter(
     /**
      * Exports a collection of spans via the configured [SpanRepository].
      *
+     * Mapping is per-span and independent, so an unmappable span does not
+     * condemn the rest of the batch: the mappable rows are still inserted and
+     * only the unmappable ones are lost. (The insert itself stays all-or-nothing
+     * — that is the repository's transactional guarantee, see [SpanRepository].)
+     * Any loss still yields a failure result and a recorded failure, so a
+     * fail-closed verwerking surfaces it.
+     *
      * @param spans the spans to export
-     * @return success or failure result code
+     * @return success only if every span was stored; failure if any was lost
      */
     override fun export(spans: MutableCollection<SpanData>): CompletableResultCode {
-        val rows: List<SpanRow> = try {
-            spans.map { SpanMapper.toRow(it) }
-        } catch (e: Exception) {
-            // A mapping failure is a code defect, not a transient DB issue. The
-            // whole batch is dropped (no retry), so flag the cause distinctly from
-            // an insert failure and list the lost LDV records.
+        val rows = ArrayList<SpanRow>(spans.size)
+        val mappedSpans = ArrayList<SpanData>(spans.size)
+        val unmappableSpans = ArrayList<SpanData>()
+        var mappingFailure: Exception? = null
+
+        for (span in spans) {
+            try {
+                rows.add(SpanMapper.toRow(span))
+                mappedSpans.add(span)
+            } catch (e: Exception) {
+                unmappableSpans.add(span)
+                mappingFailure = e
+            }
+        }
+
+        if (mappingFailure != null) {
+            // A mapping failure is a code defect, not a transient DB issue, so flag
+            // the cause distinctly from an insert failure and list the lost records.
             LOGGER.log(
                 Level.SEVERE,
-                "Failed to map ${spans.size} span(s) for export; lost spans: ${lostSpanIds(spans)}",
-                e,
+                "Failed to map ${unmappableSpans.size} of ${spans.size} span(s) for export; " +
+                    "lost spans: ${lostSpanIds(unmappableSpans)}",
+                mappingFailure,
             )
-            return CompletableResultCode.ofFailure()
+            // Relay to the request thread so a fail-closed verwerking can surface it.
+            if (relayWriteFailures) {
+                LogboekWriteFailureRecorder.record(mappingFailure)
+            }
         }
 
         if (rows.isEmpty()) {
-            return CompletableResultCode.ofSuccess()
+            return if (unmappableSpans.isEmpty()) {
+                CompletableResultCode.ofSuccess()
+            } else {
+                CompletableResultCode.ofFailure()
+            }
         }
 
         return try {
             repository.insert(rows)
-            CompletableResultCode.ofSuccess()
+            // Salvaging the mappable rows still leaves the unmappable ones lost.
+            if (unmappableSpans.isEmpty()) CompletableResultCode.ofSuccess() else CompletableResultCode.ofFailure()
         } catch (e: Exception) {
-            // The whole batch is dropped (no retry), so log the count and the
+            // The insert is all-or-nothing (no retry), so log the count and the
             // trace/span ids of the lost LDV records to keep them traceable.
             LOGGER.log(
                 Level.SEVERE,
-                "Failed to export ${spans.size} span(s); lost spans: ${lostSpanIds(spans)}",
+                "Failed to export ${mappedSpans.size} span(s); lost spans: ${lostSpanIds(mappedSpans)}",
                 e,
             )
+            // Relay to the request thread so a fail-closed verwerking can surface it.
+            if (relayWriteFailures) {
+                LogboekWriteFailureRecorder.record(e)
+            }
             CompletableResultCode.ofFailure()
         }
     }

@@ -9,6 +9,10 @@ updates:
     directory: "/"
     schedule:
       interval: "monthly"
+    ignore:
+      # CodeQL doesn't support Kotlin 2.4 yet (github/codeql#21938)
+      - dependency-name: "org.jetbrains.kotlin:*"
+        versions: [">= 2.3.30"]
   - package-ecosystem: "github-actions"
     directory: /
     schedule:

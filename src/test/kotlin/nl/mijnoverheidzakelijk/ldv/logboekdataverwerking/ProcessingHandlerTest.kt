@@ -4,16 +4,20 @@ import io.mockk.clearAllMocks
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.verify
-import java.util.Optional
 import io.opentelemetry.api.OpenTelemetry
 import io.opentelemetry.api.trace.Span
 import io.opentelemetry.api.trace.SpanBuilder
 import io.opentelemetry.api.trace.StatusCode
 import io.opentelemetry.api.trace.Tracer
 import io.opentelemetry.context.Context
-import jakarta.enterprise.inject.Instance
 import nl.mijnoverheidzakelijk.ldv.config.ConfigurationLoader
 import nl.mijnoverheidzakelijk.ldv.exporter.LdvSpanFilterProcessor
+import nl.mijnoverheidzakelijk.ldv.exporter.LogboekWriteFailureRecorder
+import java.util.Optional
+import java.util.logging.Handler
+import java.util.logging.Level
+import java.util.logging.LogRecord
+import java.util.logging.Logger
 import org.eclipse.microprofile.config.Config
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeAll
@@ -60,17 +64,12 @@ internal class ProcessingHandlerTest {
         every { mockSpanBuilder.startSpan() } returns mockSpan
         every { mockSpanBuilder.setParent(any<Context>()) } returns mockSpanBuilder
 
-        // Mock CDI Instance to provide the mock OpenTelemetry
-        val mockInstance = mockk<Instance<OpenTelemetry>>()
-        every { mockInstance.isResolvable } returns true
-        every { mockInstance.get() } returns mockOpenTelemetry
-
-        // Create handler and inject mock via reflection
+        // Inject the mock OpenTelemetry directly; LDV always uses its own dedicated SDK,
+        // so unit tests bypass init() (which would build a real SDK) and set the field.
         handler = ProcessingHandler()
-        val field = ProcessingHandler::class.java.getDeclaredField("openTelemetryInstance")
+        val field = ProcessingHandler::class.java.getDeclaredField("openTelemetry")
         field.isAccessible = true
-        field.set(handler, mockInstance)
-        handler.init()
+        field.set(handler, mockOpenTelemetry)
     }
 
     @AfterEach
@@ -181,6 +180,41 @@ internal class ProcessingHandlerTest {
                 ProcessingHandler.buildLdvSpanProcessor()
             }
         }
+
+        @Test
+        fun `batch with fail-closed warns that the policy degrades to log-only`() {
+            every { cfg.getValue("logboekdataverwerking.enabled", Boolean::class.java) } returns true
+            every { cfg.getOptionalValue("logboekdataverwerking.dbms", String::class.java) } returns Optional.of("postgresql")
+            every {
+                cfg.getValue(match<String> { it.startsWith("logboekdataverwerking.postgresql.") }, String::class.java)
+            } returns "x"
+            every {
+                cfg.getOptionalValue("logboekdataverwerking.postgresql.connection-validation-timeout-seconds", String::class.java)
+            } returns Optional.empty()
+            every { cfg.getOptionalValue("logboekdataverwerking.span-processor", String::class.java) } returns Optional.of("batch")
+            every { cfg.getOptionalValue("logboekdataverwerking.write-failure-policy", String::class.java) } returns Optional.of("fail-closed")
+
+            val records = mutableListOf<LogRecord>()
+            val capture = object : Handler() {
+                override fun publish(record: LogRecord) { records.add(record) }
+                override fun flush() {}
+                override fun close() {}
+            }
+            val logger = Logger.getLogger(ProcessingHandler::class.java.name)
+            logger.addHandler(capture)
+            try {
+                // The exporter validates the schema at construction and fails on the
+                // dummy connection config; that happens after the warning, which is
+                // all this test is about, so the failure is tolerated.
+                runCatching { ProcessingHandler.buildLdvSpanProcessor() }
+            } finally {
+                logger.removeHandler(capture)
+            }
+
+            assert(records.any {
+                it.level == Level.WARNING && it.message.contains("fail-closed has no effect under span-processor=batch")
+            })
+        }
     }
 
     @Nested
@@ -208,104 +242,59 @@ internal class ProcessingHandlerTest {
         }
 
         @Test
-        fun `Throws when processingActivityId is null`() {
+        fun `Missing processingActivityId is exported without the attribute`() {
             val logboekContext = LogboekContext().apply {
                 dataSubjectId = "subject-456"
                 dataSubjectType = "BSN"
+                status = StatusCode.OK
             }
 
-            assertThrows<IllegalArgumentException> {
-                handler.addLogboekContextToSpan(mockSpan, logboekContext)
-            }
+            handler.addLogboekContextToSpan(mockSpan, logboekContext)
+
+            // LDV 3.3.2.1: warn, never throw; the rest of the logregel still exports.
+            verify(inverse = true) { mockSpan.setAttribute("dpl.core.processing_activity_id", any<String>()) }
+            verify { mockSpan.setAttribute("dpl.core.data_subject_id", "subject-456") }
+            verify { mockSpan.setAttribute("dpl.core.data_subject_id_type", "BSN") }
+            verify { mockSpan.setStatus(StatusCode.OK) }
         }
 
         @Test
-        fun `Throws when processingActivityId is empty`() {
-            val logboekContext = LogboekContext().apply {
-                processingActivityId = ""
-                dataSubjectId = "subject-456"
-                dataSubjectType = "BSN"
-            }
-
-            assertThrows<IllegalArgumentException> {
-                handler.addLogboekContextToSpan(mockSpan, logboekContext)
-            }
-        }
-
-        @Test
-        fun `Throws when dataSubjectId is null`() {
+        fun `Half-set betrokkene pair applies only the present half`() {
             val logboekContext = LogboekContext().apply {
                 processingActivityId = "https://register.example.org/activiteiten/activity-123"
-                dataSubjectType = "BSN"
+                dataSubjectId = "subject-1"
             }
 
-            assertThrows<IllegalArgumentException> {
-                handler.addLogboekContextToSpan(mockSpan, logboekContext)
-            }
+            handler.addLogboekContextToSpan(mockSpan, logboekContext)
+
+            verify { mockSpan.setAttribute("dpl.core.data_subject_id", "subject-1") }
+            verify(inverse = true) { mockSpan.setAttribute("dpl.core.data_subject_id_type", any<String>()) }
         }
 
         @Test
-        fun `Throws when dataSubjectId is empty`() {
-            val logboekContext = LogboekContext().apply {
-                processingActivityId = "https://register.example.org/activiteiten/activity-123"
-                dataSubjectId = ""
-                dataSubjectType = "BSN"
-            }
-
-            assertThrows<IllegalArgumentException> {
-                handler.addLogboekContextToSpan(mockSpan, logboekContext)
-            }
-        }
-
-        @Test
-        fun `Throws when dataSubjectType is null`() {
-            val logboekContext = LogboekContext().apply {
-                processingActivityId = "https://register.example.org/activiteiten/activity-123"
-                dataSubjectId = "subject-456"
-            }
-
-            assertThrows<IllegalArgumentException> {
-                handler.addLogboekContextToSpan(mockSpan, logboekContext)
-            }
-        }
-
-        @Test
-        fun `Throws when dataSubjectType is empty`() {
-            val logboekContext = LogboekContext().apply {
-                processingActivityId = "https://register.example.org/activiteiten/activity-123"
-                dataSubjectId = "subject-456"
-                dataSubjectType = ""
-            }
-
-            assertThrows<IllegalArgumentException> {
-                handler.addLogboekContextToSpan(mockSpan, logboekContext)
-            }
-        }
-
-        @Test
-        fun `Throws when processingActivityId is not a valid URI`() {
+        fun `Invalid processingActivityId URI is exported as-is`() {
             val logboekContext = LogboekContext().apply {
                 processingActivityId = "not a valid uri {}"
                 dataSubjectId = "subject-456"
                 dataSubjectType = "BSN"
             }
 
-            assertThrows<IllegalArgumentException> {
-                handler.addLogboekContextToSpan(mockSpan, logboekContext)
-            }
+            handler.addLogboekContextToSpan(mockSpan, logboekContext)
+
+            verify { mockSpan.setAttribute("dpl.core.processing_activity_id", "not a valid uri {}") }
         }
 
         @Test
-        fun `Throws when processingActivityId is a relative URI`() {
+        fun `Relative processingActivityId is exported as-is`() {
             val logboekContext = LogboekContext().apply {
                 processingActivityId = "/activiteiten/activity-123"
                 dataSubjectId = "subject-456"
                 dataSubjectType = "BSN"
             }
 
-            assertThrows<IllegalArgumentException> {
-                handler.addLogboekContextToSpan(mockSpan, logboekContext)
-            }
+            handler.addLogboekContextToSpan(mockSpan, logboekContext)
+
+            verify { mockSpan.setAttribute("dpl.core.processing_activity_id", "/activiteiten/activity-123") }
         }
 
         @Test
@@ -326,7 +315,7 @@ internal class ProcessingHandlerTest {
         }
 
         @Test
-        fun `setStatus=false applies attributes but does not touch span status`() {
+        fun `Propagating failure still sets all attributes but does not touch span status`() {
             // given
             val logboekContext = LogboekContext().apply {
                 processingActivityId = "https://register.example.org/activiteiten/activity-123"
@@ -336,7 +325,7 @@ internal class ProcessingHandlerTest {
             }
 
             // when
-            handler.addLogboekContextToSpan(mockSpan, logboekContext, setStatus = false)
+            handler.addLogboekContextToSpan(mockSpan, logboekContext, propagatingException = RuntimeException("boom"))
 
             // then
             verify { mockSpan.setAttribute("dpl.core.processing_activity_id", "https://register.example.org/activiteiten/activity-123") }
@@ -347,69 +336,117 @@ internal class ProcessingHandlerTest {
         }
 
         @Test
-        fun `requireCompleteContext=false does not throw when context is incomplete`() {
+        fun `Emits a separate child logregel per betrokkene when multiple subjects`() {
             // given
             val logboekContext = LogboekContext().apply {
-                dataSubjectId = "subject-456"
+                processingActivityId = "https://register.example.org/activiteiten/activity-123"
+                addSubject("subject-1", "BSN")
+                addSubject("subject-2", "KVK")
+                status = StatusCode.OK
             }
 
             // when
-            handler.addLogboekContextToSpan(mockSpan, logboekContext, requireCompleteContext = false)
+            handler.addLogboekContextToSpan(mockSpan, logboekContext)
 
-            // then
-            verify { mockSpan.setAttribute("dpl.core.data_subject_id", "subject-456") }
-            verify(inverse = true) { mockSpan.setAttribute("dpl.core.processing_activity_id", any<String>()) }
+            // then: one child span per betrokkene (action name absent here -> fallback name)
+            verify(exactly = 2) { mockTracer.spanBuilder("verwerking-betrokkene") }
+            verify { mockSpan.setAttribute("dpl.core.data_subject_id", "subject-1") }
+            verify { mockSpan.setAttribute("dpl.core.data_subject_id_type", "BSN") }
+            verify { mockSpan.setAttribute("dpl.core.data_subject_id", "subject-2") }
+            verify { mockSpan.setAttribute("dpl.core.data_subject_id_type", "KVK") }
+        }
+
+        @Test
+        fun `No betrokkene exports the logregel without subject attributes`() {
+            // Valid per the standard (0 of 1 betrokkenen per logregel); warned so
+            // forgotten context in persoonsgegevens verwerkingen is still spotted.
+            val logboekContext = LogboekContext().apply {
+                processingActivityId = "https://register.example.org/activiteiten/activity-123"
+                status = StatusCode.OK
+            }
+
+            handler.addLogboekContextToSpan(mockSpan, logboekContext)
+
+            verify { mockSpan.setAttribute("dpl.core.processing_activity_id", "https://register.example.org/activiteiten/activity-123") }
+            verify { mockSpan.setStatus(StatusCode.OK) }
+            verify(inverse = true) { mockSpan.setAttribute("dpl.core.data_subject_id", any<String>()) }
             verify(inverse = true) { mockSpan.setAttribute("dpl.core.data_subject_id_type", any<String>()) }
         }
 
         @Test
-        fun `requireCompleteContext=false still sets all attributes when context happens to be complete`() {
-            // given
+        fun `Propagating failure marks child logregels ERROR with exception attributes for multiple subjects`() {
+            every {
+                mockConfig.getOptionalValue("logboekdataverwerking.log-exception-stacktrace", String::class.java)
+            } returns Optional.empty()
             val logboekContext = LogboekContext().apply {
                 processingActivityId = "https://register.example.org/activiteiten/activity-123"
-                dataSubjectId = "subject-456"
-                dataSubjectType = "BSN"
+                addSubject("subject-1", "BSN")
+                addSubject("subject-2", "KVK")
             }
 
-            // when
-            handler.addLogboekContextToSpan(mockSpan, logboekContext, requireCompleteContext = false)
+            handler.addLogboekContextToSpan(mockSpan, logboekContext, propagatingException = IllegalStateException("boom"))
 
-            // then
-            verify { mockSpan.setAttribute("dpl.core.processing_activity_id", "https://register.example.org/activiteiten/activity-123") }
-            verify { mockSpan.setAttribute("dpl.core.data_subject_id", "subject-456") }
-            verify { mockSpan.setAttribute("dpl.core.data_subject_id_type", "BSN") }
+            // Child spans (the builder also returns mockSpan) each get ERROR plus the
+            // exception attributes, so every per-betrokkene logregel carries the failure
+            // detail; the parent's status stays untouched because the interceptor owns
+            // it on this path.
+            verify(exactly = 2) { mockTracer.spanBuilder("verwerking-betrokkene") }
+            verify(exactly = 2) { mockSpan.setStatus(StatusCode.ERROR) }
+            verify(exactly = 2) { mockSpan.setAttribute("exception.type", "java.lang.IllegalStateException") }
+            verify(exactly = 2) { mockSpan.setAttribute("exception.message", "boom") }
+            // Stacktrace off by default (dataminimalisatie).
+            verify(inverse = true) { mockSpan.setAttribute("exception.stacktrace", any<String>()) }
+            verify(inverse = true) { mockSpan.setStatus(StatusCode.UNSET) }
+        }
+    }
+
+    @Nested
+    @DisplayName("enforceWriteAcknowledgement")
+    inner class EnforceWriteAcknowledgementTests {
+
+        @AfterEach
+        fun clearRecorder() = LogboekWriteFailureRecorder.clear()
+
+        @Test
+        fun `Throws LogboekWriteException when write failed and policy is fail-closed`() {
+            every {
+                mockConfig.getOptionalValue("logboekdataverwerking.write-failure-policy", String::class.java)
+            } returns Optional.of("fail-closed")
+            LogboekWriteFailureRecorder.record(RuntimeException("clickhouse down"))
+
+            assertThrows<LogboekWriteException> { handler.enforceWriteAcknowledgement() }
         }
 
         @Test
-        fun `requireCompleteContext=false does not validate processingActivityId as a URI`() {
-            // given
-            val logboekContext = LogboekContext().apply {
-                processingActivityId = "not a valid uri {}"
-                dataSubjectId = "subject-456"
-                dataSubjectType = "BSN"
-            }
+        fun `Does not throw when write failed but policy is fail-open`() {
+            every {
+                mockConfig.getOptionalValue("logboekdataverwerking.write-failure-policy", String::class.java)
+            } returns Optional.of("fail-open")
+            LogboekWriteFailureRecorder.record(RuntimeException("clickhouse down"))
 
-            // when
-            handler.addLogboekContextToSpan(mockSpan, logboekContext, requireCompleteContext = false)
-
-            // then
-            verify { mockSpan.setAttribute("dpl.core.processing_activity_id", "not a valid uri {}") }
+            handler.enforceWriteAcknowledgement()
         }
 
         @Test
-        fun `requireCompleteContext=false does not throw for a relative processingActivityId`() {
-            // given
-            val logboekContext = LogboekContext().apply {
-                processingActivityId = "/activiteiten/activity-123"
-                dataSubjectId = "subject-456"
-                dataSubjectType = "BSN"
-            }
+        fun `Does not throw when no write failure was recorded`() {
+            every {
+                mockConfig.getOptionalValue("logboekdataverwerking.write-failure-policy", String::class.java)
+            } returns Optional.of("fail-closed")
 
-            // when
-            handler.addLogboekContextToSpan(mockSpan, logboekContext, requireCompleteContext = false)
+            handler.enforceWriteAcknowledgement()
+        }
 
-            // then
-            verify { mockSpan.setAttribute("dpl.core.processing_activity_id", "/activiteiten/activity-123") }
+        @Test
+        fun `Consumes the failure without throwing when throwOnFailure is false`() {
+            every {
+                mockConfig.getOptionalValue("logboekdataverwerking.write-failure-policy", String::class.java)
+            } returns Optional.of("fail-closed")
+            LogboekWriteFailureRecorder.record(RuntimeException("clickhouse down"))
+
+            handler.enforceWriteAcknowledgement(throwOnFailure = false)
+
+            // The failure was consumed, so a later check finds nothing to throw.
+            handler.enforceWriteAcknowledgement(throwOnFailure = true)
         }
     }
 }

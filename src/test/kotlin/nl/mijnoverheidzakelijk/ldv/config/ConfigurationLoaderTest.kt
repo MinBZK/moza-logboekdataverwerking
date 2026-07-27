@@ -134,12 +134,12 @@ internal class ConfigurationLoaderTest {
     inner class SpanProcessorTests {
 
         @Test
-        fun `defaults to BATCH when key absent`() {
+        fun `defaults to SIMPLE when key absent`() {
             every {
                 mockConfig.getOptionalValue("logboekdataverwerking.span-processor", String::class.java)
             } returns Optional.empty()
 
-            assert(ConfigurationLoader.spanProcessor == ConfigurationLoader.SpanProcessorMode.BATCH)
+            assert(ConfigurationLoader.spanProcessor == ConfigurationLoader.SpanProcessorMode.SIMPLE)
         }
 
         @Test
@@ -167,6 +167,88 @@ internal class ConfigurationLoaderTest {
             } returns Optional.of("kafka")
 
             assertThrows<IllegalArgumentException> { ConfigurationLoader.spanProcessor }
+        }
+    }
+
+    @Nested
+    @DisplayName("Write failure policy")
+    inner class WriteFailurePolicyTests {
+
+        @Test
+        fun `defaults to FAIL_CLOSED when key absent`() {
+            every {
+                mockConfig.getOptionalValue("logboekdataverwerking.write-failure-policy", String::class.java)
+            } returns Optional.empty()
+
+            assert(ConfigurationLoader.writeFailurePolicy == ConfigurationLoader.WriteFailurePolicy.FAIL_CLOSED)
+        }
+
+        @Test
+        fun `parses fail-open case-insensitively`() {
+            every {
+                mockConfig.getOptionalValue("logboekdataverwerking.write-failure-policy", String::class.java)
+            } returns Optional.of("FAIL-OPEN")
+
+            assert(ConfigurationLoader.writeFailurePolicy == ConfigurationLoader.WriteFailurePolicy.FAIL_OPEN)
+        }
+
+        @Test
+        fun `parses fail-closed explicitly`() {
+            every {
+                mockConfig.getOptionalValue("logboekdataverwerking.write-failure-policy", String::class.java)
+            } returns Optional.of("fail-closed")
+
+            assert(ConfigurationLoader.writeFailurePolicy == ConfigurationLoader.WriteFailurePolicy.FAIL_CLOSED)
+        }
+
+        @Test
+        fun `throws on unrecognised value`() {
+            every {
+                mockConfig.getOptionalValue("logboekdataverwerking.write-failure-policy", String::class.java)
+            } returns Optional.of("retry-forever")
+
+            assertThrows<IllegalArgumentException> { ConfigurationLoader.writeFailurePolicy }
+        }
+    }
+
+    @Nested
+    @DisplayName("Log exception stacktrace flag")
+    inner class LogExceptionStacktraceTests {
+
+        @Test
+        fun `defaults to false when key absent`() {
+            every {
+                mockConfig.getOptionalValue("logboekdataverwerking.log-exception-stacktrace", String::class.java)
+            } returns Optional.empty()
+
+            assert(!ConfigurationLoader.logExceptionStacktrace)
+        }
+
+        @Test
+        fun `is true when set to true`() {
+            every {
+                mockConfig.getOptionalValue("logboekdataverwerking.log-exception-stacktrace", String::class.java)
+            } returns Optional.of("true")
+
+            assert(ConfigurationLoader.logExceptionStacktrace)
+        }
+
+        @Test
+        fun `parses case-insensitively`() {
+            every {
+                mockConfig.getOptionalValue("logboekdataverwerking.log-exception-stacktrace", String::class.java)
+            } returns Optional.of("TRUE")
+
+            assert(ConfigurationLoader.logExceptionStacktrace)
+        }
+
+        @Test
+        fun `throws on non-boolean value`() {
+            every {
+                mockConfig.getOptionalValue("logboekdataverwerking.log-exception-stacktrace", String::class.java)
+            } returns Optional.of("yes")
+
+            assertThrows<IllegalArgumentException> { ConfigurationLoader.logExceptionStacktrace }
         }
     }
 

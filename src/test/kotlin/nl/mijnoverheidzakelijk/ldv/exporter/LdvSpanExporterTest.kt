@@ -57,6 +57,8 @@ internal class LdvSpanExporterTest {
     @AfterEach
     fun tearDown() {
         clearAllMocks()
+        // ThreadLocal state survives the test; a leaked failure would fail an unrelated test.
+        LogboekWriteFailureRecorder.clear()
     }
 
     @Test
@@ -98,6 +100,91 @@ internal class LdvSpanExporterTest {
         val result = exporter.export(mutableSetOf(mockTestSpan))
 
         assert(CompletableResultCode.ofFailure() == result)
+    }
+
+    @Test
+    fun `Export records the insert failure for the fail-closed policy`() {
+        val cause = RuntimeException("Oops")
+        every { mockRepository.insert(any()) } throws cause
+
+        exporter.export(mutableSetOf(mockTestSpan))
+
+        assert(LogboekWriteFailureRecorder.consume() === cause)
+    }
+
+    @Test
+    fun `Export does not record the insert failure when relaying is disabled`() {
+        val batchExporter = LdvSpanExporter(mockRepository, relayWriteFailures = false)
+        every { mockRepository.insert(any()) } throws RuntimeException("Oops")
+
+        val result = batchExporter.export(mutableSetOf(mockTestSpan))
+
+        // Still a failure result, but nothing left behind for the recorder to consume.
+        assert(CompletableResultCode.ofFailure() == result)
+        assert(LogboekWriteFailureRecorder.consume() == null)
+    }
+
+    @Test
+    fun `Export records the mapping failure for the fail-closed policy`() {
+        mockkObject(SpanMapper)
+        try {
+            val cause = RuntimeException("mapping bug")
+            every { SpanMapper.toRow(any()) } throws cause
+
+            exporter.export(mutableSetOf(mockTestSpan))
+
+            assert(LogboekWriteFailureRecorder.consume() === cause)
+        } finally {
+            unmockkObject(SpanMapper)
+        }
+    }
+
+    @Test
+    fun `Export inserts the mappable rows and loses only the unmappable span`() {
+        val badSpan: SpanData = mockk {
+            every { traceId } returns "badTraceId"
+            every { spanId } returns "badSpanId"
+        }
+        mockkObject(SpanMapper)
+        val records = mutableListOf<LogRecord>()
+        val handler = object : Handler() {
+            override fun publish(record: LogRecord) { records.add(record) }
+            override fun flush() {}
+            override fun close() {}
+        }
+        val logger = Logger.getLogger(LdvSpanExporter::class.java.name)
+        logger.addHandler(handler)
+        try {
+            val cause = RuntimeException("mapping bug")
+            val goodRow = SpanMapper.toRow(mockTestSpan)
+            every { SpanMapper.toRow(mockTestSpan) } returns goodRow
+            every { SpanMapper.toRow(badSpan) } throws cause
+
+            val rows = slot<List<SpanRow>>()
+            every { mockRepository.insert(capture(rows)) } returns Unit
+
+            val result = exporter.export(mutableListOf(mockTestSpan, badSpan))
+
+            // The good logregel is salvaged rather than dropped with the bad one.
+            assert(rows.captured == listOf(goodRow))
+            // ...but the batch is still a failure, so fail-closed trips on the loss.
+            assert(CompletableResultCode.ofFailure() == result)
+            assert(LogboekWriteFailureRecorder.consume() === cause)
+            val message = records.single { it.level == Level.SEVERE }.message
+            assert(message.contains("Failed to map 1 of 2"))
+            assert(message.contains("badTraceId:badSpanId"))
+            assert(!message.contains("myTraceId:mySpanId")) // the salvaged span is not reported lost
+        } finally {
+            logger.removeHandler(handler)
+            unmockkObject(SpanMapper)
+        }
+    }
+
+    @Test
+    fun `Successful export leaves no failure recorded`() {
+        exporter.export(mutableSetOf(mockTestSpan))
+
+        assert(LogboekWriteFailureRecorder.consume() == null)
     }
 
     @Test
