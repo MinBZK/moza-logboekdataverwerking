@@ -256,3 +256,7 @@ De standaard vereist een aparte logregel per betrokkene. Voor het enkelvoudige g
 Validatie breekt de verwerking nooit (LDV-standaard, foutafhandeling): ontbreekt `processing_activity_id`, ontbreekt een betrokkene of is de activity-id geen absolute URI, dan wordt dit als WARNING gelogd (met `trace_id:span_id`) en wordt de logregel geëxporteerd met de attributen die wél aanwezig zijn. Een lege `@Logboek`-naam valt terug op de methodenaam. Een logregel zonder betrokkene is toegestaan (de standaard staat 0 of 1 betrokkenen per logregel toe, bijvoorbeeld bij verwerkingen zonder persoonsgegevens); de warning helpt om vergeten context snel op te sporen.
 
 Gooit de geïntercepteerde methode zelf een exceptie, dan wordt de logregel geëxporteerd met status ERROR en de `exception.*`-attributen; bij meerdere betrokkenen krijgen ook de child-logregels status ERROR. De oorspronkelijke exceptie wordt nooit gemaskeerd door een fout uit de logging zelf.
+
+## Releasen
+
+Zie [RELEASING.md](RELEASING.md) voor het publiceren van nieuwe versies naar Maven Central.
