@@ -6,7 +6,7 @@
 
     <groupId>nl.mijnoverheidzakelijk.ldv</groupId>
     <artifactId>logboekdataverwerking-wrapper</artifactId>
-    <version>2.0.0-SNAPSHOT</version>
+    <version>1.0.0</version>
 
     <name>Logboek Dataverwerkingen Clickhouse</name>
     <description>JVM utilities to integrate the Logboek Dataverwerkingen (LDV) standard using a Clickhouse DB by Logius.</description>
@@ -243,20 +243,18 @@
                     </execution>
                 </executions>
             </plugin>
+            <!-- maven-javadoc-plugin produces nothing for Kotlin-only sources;
+                 Dokka generates the javadoc jar Central requires from KDoc -->
             <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-javadoc-plugin</artifactId>
-                <version>3.12.0</version>
-                <configuration>
-                    <source>21</source>
-                    <encoding>${project.build.sourceEncoding}</encoding>
-                    <failOnError>true</failOnError>
-                </configuration>
+                <groupId>org.jetbrains.dokka</groupId>
+                <artifactId>dokka-maven-plugin</artifactId>
+                <version>2.2.0</version>
                 <executions>
                     <execution>
                         <id>attach-javadocs</id>
+                        <phase>package</phase>
                         <goals>
-                            <goal>jar</goal>
+                            <goal>javadocJar</goal>
                         </goals>
                     </execution>
                 </executions>
@@ -325,29 +323,11 @@
         </plugins>
     </build>
 
-    <repositories>
-        <repository>
-            <name>Central Portal Snapshots</name>
-            <id>central-portal-snapshots</id>
-            <url>https://central.sonatype.com/repository/maven-snapshots/</url>
-            <releases>
-                <enabled>false</enabled>
-            </releases>
-            <snapshots>
-                <enabled>true</enabled>
-            </snapshots>
-        </repository>
-    </repositories>
-
     <distributionManagement>
         <snapshotRepository>
             <id>central</id>
             <url>https://central.sonatype.com/repository/maven-snapshots/</url>
         </snapshotRepository>
-<!--        <repository>-->
-<!--            <id>central</id>-->
-<!--            <url>https://central.sonatype.com/repository/maven-snapshots/</url>-->
-<!--        </repository>-->
     </distributionManagement>
 
     <!-- Sign artifacts only for release builds -->
