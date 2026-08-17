@@ -2,6 +2,7 @@
 
 ![Project Pre-Alpha Status](https://img.shields.io/badge/life_cycle-pre_alpha-red)
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/MinBZK/moza-logboekdataverwerking/badge)](https://scorecard.dev/viewer/?uri=github.com/MinBZK/moza-logboekdataverwerking)
+[![javadoc](https://javadoc.io/badge2/nl.mijnoverheidzakelijk.ldv/logboekdataverwerking-wrapper/javadoc.svg)](https://javadoc.io/doc/nl.mijnoverheidzakelijk.ldv/logboekdataverwerking-wrapper)
 
 Dit is een Kotlin implementatie van de - in ontwikkeling zijnde - standaard Logboek Dataverwerkingen (LDV) van Logius. De library is bruikbaar vanuit zowel Kotlin als Java projecten.
 
