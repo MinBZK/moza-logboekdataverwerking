@@ -8,7 +8,7 @@ updates:
   - package-ecosystem: "maven"
     directory: "/"
     schedule:
-      interval: "monthly"
+      interval: "weekly"
     ignore:
       # CodeQL doesn't support Kotlin 2.4 yet (github/codeql#21938)
       - dependency-name: "org.jetbrains.kotlin:*"
@@ -16,4 +16,10 @@ updates:
   - package-ecosystem: "github-actions"
     directory: /
     schedule:
-      interval: "monthly"
+      interval: "weekly"
+    groups:
+      # init and analyze read the same config file and refuse to run against a
+      # version other than their own, so they have to move in one PR
+      codeql-action:
+        patterns:
+          - "github/codeql-action*"
