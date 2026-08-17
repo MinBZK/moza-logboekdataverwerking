@@ -75,7 +75,7 @@
         <dependency>
             <groupId>com.clickhouse</groupId>
             <artifactId>client-v2</artifactId>
-            <version>0.9.6</version>
+            <version>0.9.8</version>
             <optional>true</optional>
         </dependency>
         <!-- PostgreSQL JDBC driver: alternative production-capable backend.
