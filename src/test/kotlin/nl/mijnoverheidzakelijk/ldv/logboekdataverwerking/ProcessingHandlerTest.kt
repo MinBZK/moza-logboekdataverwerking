@@ -398,6 +398,58 @@ internal class ProcessingHandlerTest {
             verify(inverse = true) { mockSpan.setAttribute("exception.stacktrace", any<String>()) }
             verify(inverse = true) { mockSpan.setStatus(StatusCode.UNSET) }
         }
+
+        @Test
+        fun `Announced exception applies the context status instead of ERROR`() {
+            val nietGevonden = IllegalStateException("niet gevonden")
+            val logboekContext = LogboekContext().apply {
+                processingActivityId = "https://register.example.org/activiteiten/activity-123"
+                dataSubjectId = "subject-456"
+                dataSubjectType = "BSN"
+                expectException(nietGevonden)
+            }
+
+            handler.addLogboekContextToSpan(mockSpan, logboekContext, propagatingException = nietGevonden)
+
+            verify { mockSpan.setStatus(StatusCode.UNSET) }
+            verify(inverse = true) { mockSpan.setAttribute("exception.type", any<String>()) }
+            verify(inverse = true) { mockSpan.setAttribute("exception.message", any<String>()) }
+        }
+
+        @Test
+        fun `Announced exception leaves child logregels out of ERROR`() {
+            val nietGevonden = IllegalStateException("niet gevonden")
+            val logboekContext = LogboekContext().apply {
+                processingActivityId = "https://register.example.org/activiteiten/activity-123"
+                addSubject("subject-1", "BSN")
+                addSubject("subject-2", "KVK")
+                expectException(nietGevonden)
+            }
+
+            handler.addLogboekContextToSpan(mockSpan, logboekContext, propagatingException = nietGevonden)
+
+            verify(exactly = 2) { mockTracer.spanBuilder("verwerking-betrokkene") }
+            verify(inverse = true) { mockSpan.setStatus(StatusCode.ERROR) }
+            verify(inverse = true) { mockSpan.setAttribute("exception.type", any<String>()) }
+        }
+
+        @Test
+        fun `A different exception than the announced one is still a failure`() {
+            every {
+                mockConfig.getOptionalValue("logboekdataverwerking.log-exception-stacktrace", String::class.java)
+            } returns Optional.empty()
+            val logboekContext = LogboekContext().apply {
+                processingActivityId = "https://register.example.org/activiteiten/activity-123"
+                addSubject("subject-1", "BSN")
+                addSubject("subject-2", "KVK")
+                expectException(IllegalStateException("niet gevonden"))
+            }
+
+            handler.addLogboekContextToSpan(mockSpan, logboekContext, propagatingException = RuntimeException("kaboom"))
+
+            verify(exactly = 2) { mockSpan.setStatus(StatusCode.ERROR) }
+            verify(exactly = 2) { mockSpan.setAttribute("exception.type", "java.lang.RuntimeException") }
+        }
     }
 
     @Nested

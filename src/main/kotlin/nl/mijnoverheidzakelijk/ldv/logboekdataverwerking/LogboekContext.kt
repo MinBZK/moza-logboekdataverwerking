@@ -35,6 +35,32 @@ class LogboekContext {
     var status: StatusCode = StatusCode.UNSET
 
     /**
+     * De exceptie die via [expectException] als verwachte uitkomst is aangekondigd.
+     * Vergelijking gebeurt op identiteit: alleen deze exceptie levert een logregel
+     * zonder ERROR op.
+     */
+    @Volatile
+    var expectedException: Throwable? = null
+        internal set
+
+    /**
+     * Markeert [e] als verwachte uitkomst en zet [status] op UNSET: de logregel krijgt
+     * geen ERROR en geen `exception.*`-attributen. Aanroepen vlak vóór de throw.
+     *
+     * UNSET is wat de standaard voorschrijft voor een verwerking die zonder systeemfout
+     * afrondt maar geen resultaat oplevert; ERROR is voor systeemfouten.
+     */
+    fun expectException(e: Throwable) {
+        expectException(e, StatusCode.UNSET)
+    }
+
+    /** Als [expectException], met een expliciete [status] in plaats van UNSET. */
+    fun expectException(e: Throwable, status: StatusCode) {
+        this.status = status
+        expectedException = e
+    }
+
+    /**
      * Mensleesbare actienaam, gezet door de interceptor. Wordt hergebruikt als naam
      * voor de per-betrokkene logregels bij meerdere betrokkenen.
      */
