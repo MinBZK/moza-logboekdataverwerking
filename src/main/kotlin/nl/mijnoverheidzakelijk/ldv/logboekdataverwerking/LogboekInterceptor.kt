@@ -56,10 +56,6 @@ class LogboekInterceptor {
      * sets ERROR directly on the span and prevents the finally-block from overwriting
      * it via the (possibly stale) status field on [LogboekContext].
      *
-     * An exception the caller announced with [LogboekContext.expectException] is rethrown
-     * unchanged, but its logregel keeps the status from the context and carries no
-     * `exception.*` attributes.
-     *
      * A nested [Logboek] action parents to the enclosing action; only the outermost
      * action adopts an inbound `traceparent`. The outermost action on each thread
      * also owns the fail-closed acknowledgement: a nested action on the same thread
@@ -129,25 +125,21 @@ class LogboekInterceptor {
             }
         } catch (e: Exception) {
             caughtException = e
-            // An exception announced via LogboekContext.expectException gets no ERROR and
-            // no exception.* attributes.
-            if (logboekContext.expectedException !== e) {
-                span.setStatus(StatusCode.ERROR, e.message ?: "")
-                span.setAttribute("exception.type", e.javaClass.name)
-                e.message?.let { span.setAttribute("exception.message", it) }
-                // Stacktraces are large and can embed persoonsgegevens; only store on opt-in.
-                if (ConfigurationLoader.logExceptionStacktrace) {
-                    span.setAttribute("exception.stacktrace", e.stackTraceToString())
-                }
+            span.setStatus(StatusCode.ERROR, e.message ?: "")
+            span.setAttribute("exception.type", e.javaClass.name)
+            e.message?.let { span.setAttribute("exception.message", it) }
+            // Stacktraces are large and can embed persoonsgegevens; only store on opt-in.
+            if (ConfigurationLoader.logExceptionStacktrace) {
+                span.setAttribute("exception.stacktrace", e.stackTraceToString())
             }
             throw e
         } finally {
             logboekContext.processingActivityId = processingActivityId
             logboekContext.actionName = name
-            // Passing the exception along skips re-applying status from the context (an
-            // optimistic OK would override the ERROR set above, OTel precedence: Ok > Error)
-            // and marks child logregels ERROR with the exception attributes. An announced
-            // exception is filtered out there, not here.
+            // On the exception path ERROR is already set; the propagating exception skips
+            // re-applying status from the context (an optimistic OK would override it,
+            // OTel precedence: Ok > Error) and marks child logregels ERROR with the
+            // exception attributes.
             handler.addLogboekContextToSpan(span, logboekContext, propagatingException = caughtException)
             span.end()
             // Fail-closed is enforced once per thread, by the outermost action on it,
