@@ -258,6 +258,16 @@ Validatie breekt de verwerking nooit (LDV-standaard, foutafhandeling): ontbreekt
 
 Gooit de geïntercepteerde methode zelf een exceptie, dan wordt de logregel geëxporteerd met status ERROR en de `exception.*`-attributen; bij meerdere betrokkenen krijgen ook de child-logregels status ERROR. De oorspronkelijke exceptie wordt nooit gemaskeerd door een fout uit de logging zelf.
 
+Niet elke exceptie is een fout van de verwerking. De standaard reserveert `Error` voor systeemfouten (database-timeout, API onbereikbaar) en schrijft `Unset` voor wanneer een verwerking zonder systeemfout afrondt maar geen resultaat oplevert. Kondig zo'n uitkomst aan met `logboekContext.expectException(e)` vlak vóór de throw: de logregel krijgt `Unset` in plaats van `Error` en geen `exception.*`-attributen, ook niet op de child-logregels. De exceptie zelf gaat ongewijzigd naar de aanroeper.
+
+De aankondiging is gebonden aan de exceptie zelf, op identiteit. Gooit de actie daarna iets anders, dan is dat gewoon een fout. Dezelfde exceptie die door meerdere geneste `@Logboek`-acties omhoog komt, blijft op elk niveau aangekondigd. Een expliciete status kan mee: `expectException(e, StatusCode.OK)`.
+
+```java
+NotFoundException nietGevonden = new NotFoundException();
+logboekContext.expectException(nietGevonden);
+throw nietGevonden;
+```
+
 ## Releasen
 
 Zie [RELEASING.md](RELEASING.md) voor het publiceren van nieuwe versies naar Maven Central.
