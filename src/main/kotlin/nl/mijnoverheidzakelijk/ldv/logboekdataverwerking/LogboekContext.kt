@@ -37,7 +37,10 @@ class LogboekContext {
     /**
      * De exceptie die via [expectException] als verwachte uitkomst is aangekondigd.
      * Vergelijking gebeurt op identiteit: alleen deze exceptie levert een logregel
-     * zonder ERROR op.
+     * zonder ERROR op. Eén slot: een tweede aankondiging vervangt de eerste. De
+     * buitenste `@Logboek`-actie consumeert de aankondiging na afloop, zodat een
+     * hergebruikte exceptie-instantie niet aangekondigd blijft voor latere acties in
+     * dezelfde request; eerder intrekken kan met [clearExpectedException].
      */
     @Volatile
     var expectedException: Throwable? = null
@@ -58,6 +61,18 @@ class LogboekContext {
     fun expectException(e: Throwable, status: StatusCode) {
         this.status = status
         expectedException = e
+    }
+
+    /** True wanneer [e] de aangekondigde exceptie is; vergelijking op identiteit. */
+    fun isExpected(e: Throwable): Boolean = expectedException === e
+
+    /**
+     * Trekt de aankondiging in. Aanroepen wanneer de aangekondigde exceptie tóch wordt
+     * afgevangen en de actie doorloopt; zet daarna zelf [status], want die houdt de
+     * waarde die bij de aankondiging is gezet.
+     */
+    fun clearExpectedException() {
+        expectedException = null
     }
 
     /**

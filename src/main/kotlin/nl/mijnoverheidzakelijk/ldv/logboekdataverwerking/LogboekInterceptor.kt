@@ -58,7 +58,12 @@ class LogboekInterceptor {
      *
      * An exception the caller announced with [LogboekContext.expectException] is rethrown
      * unchanged, but its logregel keeps the status from the context and carries no
-     * `exception.*` attributes.
+     * `exception.*` attributes. The outermost action consumes the announcement, so a
+     * reused exception instance cannot stay announced for later actions on the same
+     * request. A failed write of an announced logregel still falls under fail-closed:
+     * the announced exception travels as suppressed on the [LogboekWriteException].
+     * Only an unexpected propagating exception suppresses the throw, because a write
+     * failure must not mask it.
      *
      * A nested [Logboek] action parents to the enclosing action; only the outermost
      * action adopts an inbound `traceparent`. The outermost action on each thread
@@ -131,7 +136,7 @@ class LogboekInterceptor {
             caughtException = e
             // An exception announced via LogboekContext.expectException gets no ERROR and
             // no exception.* attributes.
-            if (logboekContext.expectedException !== e) {
+            if (!logboekContext.isExpected(e)) {
                 span.setStatus(StatusCode.ERROR, e.message ?: "")
                 span.setAttribute("exception.type", e.javaClass.name)
                 e.message?.let { span.setAttribute("exception.message", it) }
@@ -155,10 +160,21 @@ class LogboekInterceptor {
             // failure recorded, so business code in between cannot catch the
             // LogboekWriteException away (silently defeating the guarantee) or mistake
             // it for a functional failure of the nested action.
-            // throwOnFailure=false on the exception path: a write failure must not mask
-            // the business exception that is already propagating.
             if (!nestedOnThread) {
-                handler.enforceWriteAcknowledgement(throwOnFailure = caughtException == null)
+                // An announced exception is an expected outcome, so its logregel still
+                // falls under fail-closed; only an unexpected propagating failure may
+                // not be masked by a write failure. The outermost action consumes the
+                // announcement so a reused exception instance cannot stay announced
+                // for later actions on this request.
+                val announced = caughtException != null && logboekContext.isExpected(caughtException)
+                logboekContext.clearExpectedException()
+                try {
+                    handler.enforceWriteAcknowledgement(throwOnFailure = caughtException == null || announced)
+                } catch (writeFailure: LogboekWriteException) {
+                    // Keep the announced outcome visible on the failure that replaces it.
+                    caughtException?.let(writeFailure::addSuppressed)
+                    throw writeFailure
+                }
             }
         }
     }

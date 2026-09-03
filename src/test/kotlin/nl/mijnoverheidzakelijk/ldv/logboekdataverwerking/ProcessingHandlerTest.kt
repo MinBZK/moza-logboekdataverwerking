@@ -384,19 +384,25 @@ internal class ProcessingHandlerTest {
                 addSubject("subject-2", "KVK")
             }
 
+            // Distinct child mocks so an ERROR wrongly landing on the parent (or missing
+            // on one child) cannot hide behind a shared-mock call count.
+            val child1 = mockk<Span>(relaxed = true)
+            val child2 = mockk<Span>(relaxed = true)
+            every { mockSpanBuilder.startSpan() } returnsMany listOf(child1, child2)
+
             handler.addLogboekContextToSpan(mockSpan, logboekContext, propagatingException = IllegalStateException("boom"))
 
-            // Child spans (the builder also returns mockSpan) each get ERROR plus the
-            // exception attributes, so every per-betrokkene logregel carries the failure
-            // detail; the parent's status stays untouched because the interceptor owns
-            // it on this path.
+            // Each per-betrokkene logregel carries the failure detail; the parent's
+            // status stays untouched because the interceptor owns it on this path.
             verify(exactly = 2) { mockTracer.spanBuilder("verwerking-betrokkene") }
-            verify(exactly = 2) { mockSpan.setStatus(StatusCode.ERROR) }
-            verify(exactly = 2) { mockSpan.setAttribute("exception.type", "java.lang.IllegalStateException") }
-            verify(exactly = 2) { mockSpan.setAttribute("exception.message", "boom") }
-            // Stacktrace off by default (dataminimalisatie).
-            verify(inverse = true) { mockSpan.setAttribute("exception.stacktrace", any<String>()) }
-            verify(inverse = true) { mockSpan.setStatus(StatusCode.UNSET) }
+            listOf(child1, child2).forEach { child ->
+                verify { child.setStatus(StatusCode.ERROR) }
+                verify { child.setAttribute("exception.type", "java.lang.IllegalStateException") }
+                verify { child.setAttribute("exception.message", "boom") }
+                // Stacktrace off by default (dataminimalisatie).
+                verify(inverse = true) { child.setAttribute("exception.stacktrace", any<String>()) }
+            }
+            verify(inverse = true) { mockSpan.setStatus(any()) }
         }
 
         @Test
@@ -425,12 +431,19 @@ internal class ProcessingHandlerTest {
                 addSubject("subject-2", "KVK")
                 expectException(nietGevonden)
             }
+            val child1 = mockk<Span>(relaxed = true)
+            val child2 = mockk<Span>(relaxed = true)
+            every { mockSpanBuilder.startSpan() } returnsMany listOf(child1, child2)
 
             handler.addLogboekContextToSpan(mockSpan, logboekContext, propagatingException = nietGevonden)
 
             verify(exactly = 2) { mockTracer.spanBuilder("verwerking-betrokkene") }
-            verify(inverse = true) { mockSpan.setStatus(StatusCode.ERROR) }
-            verify(inverse = true) { mockSpan.setAttribute("exception.type", any<String>()) }
+            verify { mockSpan.setStatus(StatusCode.UNSET) }
+            listOf(child1, child2).forEach { child ->
+                verify { child.setStatus(StatusCode.UNSET) }
+                verify(inverse = true) { child.setStatus(StatusCode.ERROR) }
+                verify(inverse = true) { child.setAttribute("exception.type", any<String>()) }
+            }
         }
 
         @Test
@@ -444,11 +457,17 @@ internal class ProcessingHandlerTest {
                 addSubject("subject-2", "KVK")
                 expectException(IllegalStateException("niet gevonden"))
             }
+            val child1 = mockk<Span>(relaxed = true)
+            val child2 = mockk<Span>(relaxed = true)
+            every { mockSpanBuilder.startSpan() } returnsMany listOf(child1, child2)
 
             handler.addLogboekContextToSpan(mockSpan, logboekContext, propagatingException = RuntimeException("kaboom"))
 
-            verify(exactly = 2) { mockSpan.setStatus(StatusCode.ERROR) }
-            verify(exactly = 2) { mockSpan.setAttribute("exception.type", "java.lang.RuntimeException") }
+            listOf(child1, child2).forEach { child ->
+                verify { child.setStatus(StatusCode.ERROR) }
+                verify { child.setAttribute("exception.type", "java.lang.RuntimeException") }
+            }
+            verify(inverse = true) { mockSpan.setStatus(any()) }
         }
     }
 

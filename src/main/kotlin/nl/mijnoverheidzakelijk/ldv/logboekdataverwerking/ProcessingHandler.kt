@@ -73,13 +73,16 @@ class ProcessingHandler {
      * the logregel is exported with whatever attributes are present.
      *
      * The [propagatingException] parameter tells this method that an exception from
-     * the intercepted method is already propagating. An exception announced via
-     * [LogboekContext.expectException] is exempt: it leaves the status and the
-     * `exception.*` attributes alone, as if nothing was propagating. The span's own status is then
-     * left untouched (the interceptor has already set ERROR and the `exception.*`
-     * attributes on it) and per-betrokkene child logregels get [StatusCode.ERROR]
-     * plus the same `exception.*` attributes, so every logregel of the failed
-     * verwerking carries the failure detail.
+     * the intercepted method is already propagating. On that path the span's own
+     * status is left untouched (the interceptor has already set ERROR and the
+     * `exception.*` attributes on it) and per-betrokkene child logregels get
+     * [StatusCode.ERROR] plus the same `exception.*` attributes, so every logregel
+     * of the failed verwerking carries the failure detail.
+     *
+     * An exception announced via [LogboekContext.expectException] is exempt and is
+     * treated as if nothing was propagating: the status from the context is applied
+     * to the span, and no `exception.*` attributes are set, not on the child
+     * logregels either.
      *
      * @param span                 the span to enrich
      * @param logboekContext       the context holding attributes
@@ -99,7 +102,7 @@ class ProcessingHandler {
 
         // An exception announced via LogboekContext.expectException does not count as a
         // failure here; identity, so only the announced instance is exempt.
-        val unexpected = propagatingException?.takeUnless { it === logboekContext.expectedException }
+        val unexpected = propagatingException?.takeUnless(logboekContext::isExpected)
 
         if (!processingActivityId.isNullOrEmpty()) {
             span.setAttribute("dpl.core.processing_activity_id", processingActivityId)
