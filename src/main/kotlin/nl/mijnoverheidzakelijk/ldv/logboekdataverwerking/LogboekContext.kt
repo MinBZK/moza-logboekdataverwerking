@@ -15,6 +15,10 @@ data class DataSubject(val id: String, val type: String)
 /**
  * Request-scoped holder for LogboekDataverwerking-related context data that will be attached to spans.
  * This includes the processing activity, the data subject(s), and the span status.
+ *
+ * May be handed to another thread along with the propagated OpenTelemetry context, but is
+ * not safe for mutation by two concurrently running actions: run a cross-thread action to
+ * completion (join) before continuing on the original thread.
  */
 @RequestScoped
 class LogboekContext {
@@ -33,6 +37,47 @@ class LogboekContext {
     var dataSubjectType: String? = null
 
     var status: StatusCode = StatusCode.UNSET
+
+    /**
+     * De exceptie die via [expectException] als verwachte uitkomst is aangekondigd.
+     * Vergelijking gebeurt op identiteit: alleen deze exceptie levert een logregel
+     * zonder ERROR op. Eén slot: een tweede aankondiging vervangt de eerste. De
+     * buitenste `@Logboek`-actie consumeert de aankondiging na afloop, zodat een
+     * hergebruikte exceptie-instantie niet aangekondigd blijft voor latere acties in
+     * dezelfde request; eerder intrekken kan met [clearExpectedException].
+     */
+    @Volatile
+    var expectedException: Throwable? = null
+        internal set
+
+    /**
+     * Markeert [e] als verwachte uitkomst en zet [status] op UNSET: de logregel krijgt
+     * geen ERROR en geen `exception.*`-attributen. Aanroepen vlak vóór de throw.
+     *
+     * UNSET is wat de standaard voorschrijft voor een verwerking die zonder systeemfout
+     * afrondt maar geen resultaat oplevert; ERROR is voor systeemfouten.
+     */
+    fun expectException(e: Throwable) {
+        expectException(e, StatusCode.UNSET)
+    }
+
+    /** Als [expectException], met een expliciete [status] in plaats van UNSET. */
+    fun expectException(e: Throwable, status: StatusCode) {
+        this.status = status
+        expectedException = e
+    }
+
+    /** True wanneer [e] de aangekondigde exceptie is; vergelijking op identiteit. */
+    fun isExpected(e: Throwable): Boolean = expectedException === e
+
+    /**
+     * Trekt de aankondiging in. Aanroepen wanneer de aangekondigde exceptie tóch wordt
+     * afgevangen en de actie doorloopt; zet daarna zelf [status], want die houdt de
+     * waarde die bij de aankondiging is gezet.
+     */
+    fun clearExpectedException() {
+        expectedException = null
+    }
 
     /**
      * Mensleesbare actienaam, gezet door de interceptor. Wordt hergebruikt als naam

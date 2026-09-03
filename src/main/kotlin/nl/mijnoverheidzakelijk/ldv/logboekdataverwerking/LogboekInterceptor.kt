@@ -56,6 +56,15 @@ class LogboekInterceptor {
      * sets ERROR directly on the span and prevents the finally-block from overwriting
      * it via the (possibly stale) status field on [LogboekContext].
      *
+     * An exception the caller announced with [LogboekContext.expectException] is rethrown
+     * unchanged, but its logregel keeps the status from the context and carries no
+     * `exception.*` attributes. The outermost action consumes the announcement, so a
+     * reused exception instance cannot stay announced for later actions on the same
+     * request. A failed write of an announced logregel still falls under fail-closed:
+     * the announced exception travels as suppressed on the [LogboekWriteException].
+     * Only an unexpected propagating exception suppresses the throw, because a write
+     * failure must not mask it.
+     *
      * A nested [Logboek] action parents to the enclosing action; only the outermost
      * action adopts an inbound `traceparent`. The outermost action on each thread
      * also owns the fail-closed acknowledgement: a nested action on the same thread
@@ -116,6 +125,10 @@ class LogboekInterceptor {
 
         val span = handler.startSpan(name, traceContext)
         var caughtException: Exception? = null
+        // The announced/unexpected verdict is taken once, in the catch, and reused for
+        // the fail-closed decision in the finally: the two may never disagree, or a
+        // write failure could be consumed for a logregel that was exported as a failure.
+        var announcedAtCatch = false
 
         try {
             traceContext.with(LDV_ACTION, Thread.currentThread().threadId()).makeCurrent().use { _ ->
@@ -125,21 +138,26 @@ class LogboekInterceptor {
             }
         } catch (e: Exception) {
             caughtException = e
-            span.setStatus(StatusCode.ERROR, e.message ?: "")
-            span.setAttribute("exception.type", e.javaClass.name)
-            e.message?.let { span.setAttribute("exception.message", it) }
-            // Stacktraces are large and can embed persoonsgegevens; only store on opt-in.
-            if (ConfigurationLoader.logExceptionStacktrace) {
-                span.setAttribute("exception.stacktrace", e.stackTraceToString())
+            announcedAtCatch = logboekContext.isExpected(e)
+            // An exception announced via LogboekContext.expectException gets no ERROR and
+            // no exception.* attributes.
+            if (!announcedAtCatch) {
+                span.setStatus(StatusCode.ERROR, e.message ?: "")
+                span.setAttribute("exception.type", e.javaClass.name)
+                e.message?.let { span.setAttribute("exception.message", it) }
+                // Stacktraces are large and can embed persoonsgegevens; only store on opt-in.
+                if (ConfigurationLoader.logExceptionStacktrace) {
+                    span.setAttribute("exception.stacktrace", e.stackTraceToString())
+                }
             }
             throw e
         } finally {
             logboekContext.processingActivityId = processingActivityId
             logboekContext.actionName = name
-            // On the exception path ERROR is already set; the propagating exception skips
-            // re-applying status from the context (an optimistic OK would override it,
-            // OTel precedence: Ok > Error) and marks child logregels ERROR with the
-            // exception attributes.
+            // Passing the exception along skips re-applying status from the context (an
+            // optimistic OK would override the ERROR set above, OTel precedence: Ok > Error)
+            // and marks child logregels ERROR with the exception attributes. An announced
+            // exception is filtered out there, not here.
             handler.addLogboekContextToSpan(span, logboekContext, propagatingException = caughtException)
             span.end()
             // Fail-closed is enforced once per thread, by the outermost action on it,
@@ -147,10 +165,24 @@ class LogboekInterceptor {
             // failure recorded, so business code in between cannot catch the
             // LogboekWriteException away (silently defeating the guarantee) or mistake
             // it for a functional failure of the nested action.
-            // throwOnFailure=false on the exception path: a write failure must not mask
-            // the business exception that is already propagating.
             if (!nestedOnThread) {
-                handler.enforceWriteAcknowledgement(throwOnFailure = caughtException == null)
+                // An announced exception is an expected outcome, so its logregel still
+                // falls under fail-closed: a verwerking whose logregel was not stored
+                // may not pass silently (LDV tolerates over-rapporteren, never
+                // onder-rapporteren). Only an unexpected propagating failure suppresses
+                // the throw, because a write failure must not mask it. The verdict is
+                // announcedAtCatch, not a re-read of the slot, so it always matches how
+                // the logregel was exported. The outermost action then consumes the
+                // announcement so a reused exception instance cannot stay announced
+                // for later actions on this request.
+                logboekContext.clearExpectedException()
+                try {
+                    handler.enforceWriteAcknowledgement(throwOnFailure = caughtException == null || announcedAtCatch)
+                } catch (writeFailure: LogboekWriteException) {
+                    // Keep the announced outcome visible on the failure that replaces it.
+                    caughtException?.let(writeFailure::addSuppressed)
+                    throw writeFailure
+                }
             }
         }
     }

@@ -207,6 +207,198 @@ internal class LogboekInterceptorTest {
         }
 
         @Test
+        fun `Announced exception gets no error status and no exception attributes`() {
+            // given
+            val mockMethod = getAnnotatedMethod()
+            val nietGevonden = RuntimeException("niet gevonden")
+            every { mockInvocationContext.method } returns mockMethod
+            every { mockInvocationContext.proceed() } answers {
+                mockLogboekContext.expectException(nietGevonden)
+                throw nietGevonden
+            }
+
+            // when / then
+            val thrown = assertThrows<RuntimeException> { interceptor.log(mockInvocationContext) }
+
+            assert(thrown === nietGevonden) { "The exception must reach the caller unchanged" }
+            assert(mockLogboekContext.status == StatusCode.UNSET) { "Default status is UNSET" }
+            verify(exactly = 0) { mockSpan.setStatus(StatusCode.ERROR, any<String>()) }
+            verify(exactly = 0) { mockSpan.setAttribute("exception.type", any<String>()) }
+            // The exception is still handed to the handler, which filters it on identity.
+            verify { mockHandler.addLogboekContextToSpan(mockSpan, mockLogboekContext, nietGevonden) }
+            verify { mockSpan.end() }
+        }
+
+        @Test
+        fun `Announced exception with an explicit status keeps that status`() {
+            // given
+            val mockMethod = getAnnotatedMethod()
+            val geannuleerd = RuntimeException("geannuleerd")
+            every { mockInvocationContext.method } returns mockMethod
+            every { mockInvocationContext.proceed() } answers {
+                mockLogboekContext.expectException(geannuleerd, StatusCode.OK)
+                throw geannuleerd
+            }
+
+            // when / then
+            assertThrows<RuntimeException> { interceptor.log(mockInvocationContext) }
+
+            assert(mockLogboekContext.status == StatusCode.OK)
+            verify(exactly = 0) { mockSpan.setStatus(StatusCode.ERROR, any<String>()) }
+        }
+
+        @Test
+        fun `Another exception after an announcement is still an error`() {
+            // given: the announced exception is caught inside the action, something else fails
+            val mockMethod = getAnnotatedMethod()
+            val kaboom = RuntimeException("kaboom")
+            every { mockInvocationContext.method } returns mockMethod
+            every { mockInvocationContext.proceed() } answers {
+                mockLogboekContext.expectException(RuntimeException("niet gevonden"))
+                throw kaboom
+            }
+
+            // when / then
+            assertThrows<RuntimeException> { interceptor.log(mockInvocationContext) }
+
+            verify { mockSpan.setStatus(StatusCode.ERROR, "kaboom") }
+            verify { mockSpan.setAttribute("exception.type", RuntimeException::class.java.name) }
+            verify { mockHandler.addLogboekContextToSpan(mockSpan, mockLogboekContext, kaboom) }
+        }
+
+        @Test
+        fun `Announcement survives from a nested action into the enclosing action`() {
+            // Real handler + real SDK so the nesting uses real context propagation: the
+            // announced exception propagates through both actions and neither logregel
+            // may become ERROR.
+            val ended = mutableListOf<ReadableSpan>()
+            val provider = SdkTracerProvider.builder()
+                .addSpanProcessor(object : SpanProcessor {
+                    override fun onStart(parentContext: io.opentelemetry.context.Context, span: ReadWriteSpan) {}
+                    override fun isStartRequired(): Boolean = false
+                    override fun onEnd(span: ReadableSpan) {
+                        ended.add(span)
+                    }
+                    override fun isEndRequired(): Boolean = true
+                })
+                .build()
+            val sdk = OpenTelemetrySdk.builder().setTracerProvider(provider).build()
+            val realHandler = ProcessingHandler()
+            setPrivateField(realHandler, "openTelemetry", sdk)
+            setPrivateField(interceptor, "handler", realHandler)
+
+            val outerCall = mockk<InvocationContext>()
+            val innerCall = mockk<InvocationContext>()
+            every { outerCall.method } returns getAnnotatedMethod()
+            every { innerCall.method } returns getAnnotatedMethod()
+            val nietGevonden = RuntimeException("niet gevonden")
+            every { innerCall.proceed() } answers {
+                mockLogboekContext.expectException(nietGevonden)
+                throw nietGevonden
+            }
+            every { outerCall.proceed() } answers { interceptor.log(innerCall) }
+
+            // when / then
+            val thrown = assertThrows<RuntimeException> { interceptor.log(outerCall) }
+            sdk.close()
+
+            assert(thrown === nietGevonden) { "The exception must reach the caller unchanged" }
+            assert(ended.size == 2)
+            assert(ended.none { it.toSpanData().status.statusCode == StatusCode.ERROR }) {
+                "An announced exception may not produce ERROR on any nesting level"
+            }
+        }
+
+        @Test
+        fun `A reused exception instance is not announced for a later action`() {
+            // given: an announced action completes; the outermost action consumes the
+            // announcement, so the same (e.g. cached) instance thrown later is a failure
+            val mockMethod = getAnnotatedMethod()
+            val nietGevonden = RuntimeException("niet gevonden")
+            every { mockInvocationContext.method } returns mockMethod
+            every { mockInvocationContext.proceed() } answers {
+                mockLogboekContext.expectException(nietGevonden)
+                throw nietGevonden
+            }
+            assertThrows<RuntimeException> { interceptor.log(mockInvocationContext) }
+            assert(mockLogboekContext.expectedException == null) {
+                "The outermost action must consume the announcement"
+            }
+
+            // when: a later action on the same request throws the same instance
+            every { mockInvocationContext.proceed() } throws nietGevonden
+            assertThrows<RuntimeException> { interceptor.log(mockInvocationContext) }
+
+            // then
+            verify { mockSpan.setStatus(StatusCode.ERROR, "niet gevonden") }
+        }
+
+        @Test
+        fun `Fail-closed verdict follows the catch even if the announcement is cleared during export`() {
+            // given: the announcement disappears while the handler enriches the span
+            // (the concurrent-mutation hazard LogboekContext documents as unsupported);
+            // the verdict taken in the catch must still govern fail-closed.
+            val mockMethod = getAnnotatedMethod()
+            val nietGevonden = RuntimeException("niet gevonden")
+            every { mockInvocationContext.method } returns mockMethod
+            every { mockInvocationContext.proceed() } answers {
+                mockLogboekContext.expectException(nietGevonden)
+                throw nietGevonden
+            }
+            every { mockHandler.addLogboekContextToSpan(any(), any<LogboekContext>(), any()) } answers {
+                mockLogboekContext.clearExpectedException()
+            }
+
+            // when / then
+            assertThrows<RuntimeException> { interceptor.log(mockInvocationContext) }
+
+            // The logregel was exported as an expected outcome, so its write still
+            // falls under fail-closed.
+            verify { mockHandler.enforceWriteAcknowledgement(throwOnFailure = true) }
+        }
+
+        @Test
+        fun `Unexpected exception keeps a write failure non-masking even if an announcement appears during export`() {
+            // given: the span was already exported as ERROR; a late announcement may not
+            // flip the fail-closed verdict and mask the propagating failure.
+            val mockMethod = getAnnotatedMethod()
+            val kaboom = RuntimeException("kaboom")
+            every { mockInvocationContext.method } returns mockMethod
+            every { mockInvocationContext.proceed() } throws kaboom
+            every { mockHandler.addLogboekContextToSpan(any(), any<LogboekContext>(), any()) } answers {
+                mockLogboekContext.expectException(kaboom)
+            }
+
+            // when / then
+            assertThrows<RuntimeException> { interceptor.log(mockInvocationContext) }
+
+            verify { mockHandler.enforceWriteAcknowledgement(throwOnFailure = false) }
+        }
+
+        @Test
+        fun `Announced exception still enforces fail-closed with the announcement as suppressed`() {
+            // given: the verwerking ends in an expected outcome, but its logregel write
+            // failed; the outcome may not silently count as logged
+            val mockMethod = getAnnotatedMethod()
+            val nietGevonden = RuntimeException("niet gevonden")
+            every { mockInvocationContext.method } returns mockMethod
+            every { mockInvocationContext.proceed() } answers {
+                mockLogboekContext.expectException(nietGevonden)
+                throw nietGevonden
+            }
+            every { mockHandler.enforceWriteAcknowledgement(throwOnFailure = true) } throws
+                LogboekWriteException("Logregel kon niet in het Logboek worden opgeslagen")
+
+            // when / then
+            val thrown = assertThrows<LogboekWriteException> { interceptor.log(mockInvocationContext) }
+
+            verify { mockHandler.enforceWriteAcknowledgement(throwOnFailure = true) }
+            assert(thrown.suppressed.any { it === nietGevonden }) {
+                "The announced outcome must travel as suppressed on the write failure"
+            }
+        }
+
+        @Test
         fun `Exception with null message uses empty description`() {
             // given
             val mockMethod = getAnnotatedMethod()

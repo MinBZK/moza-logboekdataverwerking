@@ -73,11 +73,16 @@ class ProcessingHandler {
      * the logregel is exported with whatever attributes are present.
      *
      * The [propagatingException] parameter tells this method that an exception from
-     * the intercepted method is already propagating. The span's own status is then
-     * left untouched (the interceptor has already set ERROR and the `exception.*`
-     * attributes on it) and per-betrokkene child logregels get [StatusCode.ERROR]
-     * plus the same `exception.*` attributes, so every logregel of the failed
-     * verwerking carries the failure detail.
+     * the intercepted method is already propagating. On that path the span's own
+     * status is left untouched (the interceptor has already set ERROR and the
+     * `exception.*` attributes on it) and per-betrokkene child logregels get
+     * [StatusCode.ERROR] plus the same `exception.*` attributes, so every logregel
+     * of the failed verwerking carries the failure detail.
+     *
+     * An exception announced via [LogboekContext.expectException] is exempt and is
+     * treated as if nothing was propagating: the status from the context is applied
+     * to the span, and no `exception.*` attributes are set, not on the child
+     * logregels either.
      *
      * @param span                 the span to enrich
      * @param logboekContext       the context holding attributes
@@ -95,10 +100,14 @@ class ProcessingHandler {
 
         warnOnIncompleteContext(span, logboekContext, subjects)
 
+        // An exception announced via LogboekContext.expectException does not count as a
+        // failure here; identity, so only the announced instance is exempt.
+        val unexpected = propagatingException?.takeUnless(logboekContext::isExpected)
+
         if (!processingActivityId.isNullOrEmpty()) {
             span.setAttribute("dpl.core.processing_activity_id", processingActivityId)
         }
-        if (propagatingException == null) {
+        if (unexpected == null) {
             span.setStatus(logboekContext.status)
         }
 
@@ -107,14 +116,14 @@ class ProcessingHandler {
             // subject-less and each betrokkene becomes a child span.
             val parentContext = Context.root().with(span)
             val childName = logboekContext.actionName?.takeIf { it.isNotEmpty() } ?: CHILD_SPAN_NAME
-            val childStatus = if (propagatingException != null) StatusCode.ERROR else logboekContext.status
+            val childStatus = if (unexpected != null) StatusCode.ERROR else logboekContext.status
             // One exception per actie, shared by all children; computed once because
             // rendering a stacktrace is not cheap. Mirrors the attributes the
             // interceptor sets on the action span. Stacktraces are large and can
             // embed persoonsgegevens; only stored on opt-in, same as the parent.
-            val exceptionType = propagatingException?.javaClass?.name
-            val exceptionMessage = propagatingException?.message
-            val exceptionStacktrace = propagatingException
+            val exceptionType = unexpected?.javaClass?.name
+            val exceptionMessage = unexpected?.message
+            val exceptionStacktrace = unexpected
                 ?.takeIf { ConfigurationLoader.logExceptionStacktrace }
                 ?.stackTraceToString()
             subjects.forEach { subject ->
