@@ -15,6 +15,10 @@ data class DataSubject(val id: String, val type: String)
 /**
  * Request-scoped holder for LogboekDataverwerking-related context data that will be attached to spans.
  * This includes the processing activity, the data subject(s), and the span status.
+ *
+ * May be handed to another thread along with the propagated OpenTelemetry context, but is
+ * not safe for mutation by two concurrently running actions: run a cross-thread action to
+ * completion (join) before continuing on the original thread.
  */
 @RequestScoped
 class LogboekContext {

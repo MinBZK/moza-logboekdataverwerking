@@ -125,6 +125,10 @@ class LogboekInterceptor {
 
         val span = handler.startSpan(name, traceContext)
         var caughtException: Exception? = null
+        // The announced/unexpected verdict is taken once, in the catch, and reused for
+        // the fail-closed decision in the finally: the two may never disagree, or a
+        // write failure could be consumed for a logregel that was exported as a failure.
+        var announcedAtCatch = false
 
         try {
             traceContext.with(LDV_ACTION, Thread.currentThread().threadId()).makeCurrent().use { _ ->
@@ -134,9 +138,10 @@ class LogboekInterceptor {
             }
         } catch (e: Exception) {
             caughtException = e
+            announcedAtCatch = logboekContext.isExpected(e)
             // An exception announced via LogboekContext.expectException gets no ERROR and
             // no exception.* attributes.
-            if (!logboekContext.isExpected(e)) {
+            if (!announcedAtCatch) {
                 span.setStatus(StatusCode.ERROR, e.message ?: "")
                 span.setAttribute("exception.type", e.javaClass.name)
                 e.message?.let { span.setAttribute("exception.message", it) }
@@ -162,14 +167,17 @@ class LogboekInterceptor {
             // it for a functional failure of the nested action.
             if (!nestedOnThread) {
                 // An announced exception is an expected outcome, so its logregel still
-                // falls under fail-closed; only an unexpected propagating failure may
-                // not be masked by a write failure. The outermost action consumes the
+                // falls under fail-closed: a verwerking whose logregel was not stored
+                // may not pass silently (LDV tolerates over-rapporteren, never
+                // onder-rapporteren). Only an unexpected propagating failure suppresses
+                // the throw, because a write failure must not mask it. The verdict is
+                // announcedAtCatch, not a re-read of the slot, so it always matches how
+                // the logregel was exported. The outermost action then consumes the
                 // announcement so a reused exception instance cannot stay announced
                 // for later actions on this request.
-                val announced = caughtException != null && logboekContext.isExpected(caughtException)
                 logboekContext.clearExpectedException()
                 try {
-                    handler.enforceWriteAcknowledgement(throwOnFailure = caughtException == null || announced)
+                    handler.enforceWriteAcknowledgement(throwOnFailure = caughtException == null || announcedAtCatch)
                 } catch (writeFailure: LogboekWriteException) {
                     // Keep the announced outcome visible on the failure that replaces it.
                     caughtException?.let(writeFailure::addSuppressed)

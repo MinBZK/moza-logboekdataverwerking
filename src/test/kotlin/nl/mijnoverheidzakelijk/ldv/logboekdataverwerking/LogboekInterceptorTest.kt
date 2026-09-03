@@ -334,6 +334,48 @@ internal class LogboekInterceptorTest {
         }
 
         @Test
+        fun `Fail-closed verdict follows the catch even if the announcement is cleared during export`() {
+            // given: the announcement disappears while the handler enriches the span
+            // (the concurrent-mutation hazard LogboekContext documents as unsupported);
+            // the verdict taken in the catch must still govern fail-closed.
+            val mockMethod = getAnnotatedMethod()
+            val nietGevonden = RuntimeException("niet gevonden")
+            every { mockInvocationContext.method } returns mockMethod
+            every { mockInvocationContext.proceed() } answers {
+                mockLogboekContext.expectException(nietGevonden)
+                throw nietGevonden
+            }
+            every { mockHandler.addLogboekContextToSpan(any(), any<LogboekContext>(), any()) } answers {
+                mockLogboekContext.clearExpectedException()
+            }
+
+            // when / then
+            assertThrows<RuntimeException> { interceptor.log(mockInvocationContext) }
+
+            // The logregel was exported as an expected outcome, so its write still
+            // falls under fail-closed.
+            verify { mockHandler.enforceWriteAcknowledgement(throwOnFailure = true) }
+        }
+
+        @Test
+        fun `Unexpected exception keeps a write failure non-masking even if an announcement appears during export`() {
+            // given: the span was already exported as ERROR; a late announcement may not
+            // flip the fail-closed verdict and mask the propagating failure.
+            val mockMethod = getAnnotatedMethod()
+            val kaboom = RuntimeException("kaboom")
+            every { mockInvocationContext.method } returns mockMethod
+            every { mockInvocationContext.proceed() } throws kaboom
+            every { mockHandler.addLogboekContextToSpan(any(), any<LogboekContext>(), any()) } answers {
+                mockLogboekContext.expectException(kaboom)
+            }
+
+            // when / then
+            assertThrows<RuntimeException> { interceptor.log(mockInvocationContext) }
+
+            verify { mockHandler.enforceWriteAcknowledgement(throwOnFailure = false) }
+        }
+
+        @Test
         fun `Announced exception still enforces fail-closed with the announcement as suppressed`() {
             // given: the verwerking ends in an expected outcome, but its logregel write
             // failed; the outcome may not silently count as logged
