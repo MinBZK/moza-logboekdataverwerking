@@ -1,6 +1,7 @@
 # Logboek Dataverwerkingen JVM implementatie
 
-![Project Pre-Alpha Status](https://img.shields.io/badge/life_cycle-pre_alpha-red)
+![Project Stable Status](https://img.shields.io/badge/life_cycle-stable-brightgreen)
+[![Maven Central](https://img.shields.io/maven-central/v/nl.mijnoverheidzakelijk.ldv/logboekdataverwerking-wrapper)](https://central.sonatype.com/artifact/nl.mijnoverheidzakelijk.ldv/logboekdataverwerking-wrapper)
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/MinBZK/moza-logboekdataverwerking/badge)](https://scorecard.dev/viewer/?uri=github.com/MinBZK/moza-logboekdataverwerking)
 [![javadoc](https://javadoc.io/badge2/nl.mijnoverheidzakelijk.ldv/logboekdataverwerking-wrapper/javadoc.svg)](https://javadoc.io/doc/nl.mijnoverheidzakelijk.ldv/logboekdataverwerking-wrapper)
 
