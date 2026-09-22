@@ -5,7 +5,7 @@
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/MinBZK/moza-logboekdataverwerking/badge)](https://scorecard.dev/viewer/?uri=github.com/MinBZK/moza-logboekdataverwerking)
 [![javadoc](https://javadoc.io/badge2/nl.mijnoverheidzakelijk.ldv/logboekdataverwerking-wrapper/javadoc.svg)](https://javadoc.io/doc/nl.mijnoverheidzakelijk.ldv/logboekdataverwerking-wrapper)
 
-Dit is een Kotlin implementatie van de - in ontwikkeling zijnde - standaard Logboek Dataverwerkingen (LDV) van Logius. De library is bruikbaar vanuit zowel Kotlin als Java projecten.
+Dit is een Kotlin implementatie van de - in ontwikkeling zijnde - standaard Logboek Dataverwerkingen (LDV) van Logius. De library is bruikbaar vanuit Kotlin- en Java-projecten die op Quarkus draaien.
 
 ## Inleiding
 
@@ -13,10 +13,11 @@ Vanuit het programma MijnOverheid Zakelijk sluiten we zoveel mogelijk aan op de 
 
 ## Doel
 
-Dit Open Source project is opgezet om de LDV standaard eenvoudig aan nieuwe of bestaande Java/Kotlin oplossingen toe te voegen.
+Dit Open Source project is opgezet om de LDV standaard eenvoudig aan nieuwe of bestaande Quarkus-applicaties (Java of Kotlin) toe te voegen.
 
 ## Afhankelijkheden
 
+- **Quarkus** - De library is gebouwd op CDI-interceptors (`@Logboek`), JAX-RS (`HttpHeaders`, client filter) en MicroProfile Config. Quarkus levert deze API's; in de library zijn ze als `provided` gedeclareerd. Andere runtimes, zoals Spring Boot, worden niet ondersteund.
 - **Clickhouse of PostgreSQL database** - Voor het opslaan van de logging wordt standaard ClickHouse gebruikt: https://clickhouse.com/. ClickHouse is geoptimaliseerd voor zeer grote volumes. Organisaties die liever PostgreSQL beheren, kunnen dat als backend kiezen via `logboekdataverwerking.dbms=postgresql` (zie hieronder).
 - **Verwerkingsactiviteiten register** - Bij het loggen van de activiteit wordt verwezen naar een ID van een verwerkingsactiviteit in een activiteiten register. Meer informatie hierover is te vinden in de documentatie van de standaard. Hierbij wordt geen richtlijn opgegeven voor de technische implementatie en deze is daarom niet inbegrepen bij deze implementatie.
 
