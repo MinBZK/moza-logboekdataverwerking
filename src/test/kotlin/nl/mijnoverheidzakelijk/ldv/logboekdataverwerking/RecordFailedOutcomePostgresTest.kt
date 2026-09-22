@@ -83,8 +83,9 @@ internal class RecordFailedOutcomePostgresTest {
         span.end()
         handler.enforceWriteAcknowledgement()
 
-        handler.recordFailedOutcome(logregels, IllegalStateException("levering mislukt"))
+        val lost = handler.recordFailedOutcome(logregels, IllegalStateException("levering mislukt"))
 
+        assert(lost.isEmpty()) { "the outcome logregel was acknowledged, got $lost" }
         val stored = rows()
         assert(stored.size == 2) { "expected the acknowledged logregel plus one outcome logregel, got $stored" }
         val original = stored.single { it.spanId == span.spanContext.spanId }
@@ -150,12 +151,13 @@ internal class RecordFailedOutcomePostgresTest {
         handler.enforceWriteAcknowledgement()
 
         sql("ALTER TABLE $TABLE RENAME TO ${TABLE}_weg")
-        try {
+        val lost = try {
             handler.recordFailedOutcome(logregels, IllegalStateException("levering mislukt"))
         } finally {
             sql("ALTER TABLE ${TABLE}_weg RENAME TO $TABLE")
         }
 
+        assert(lost == logregels) { "the caller must learn that the Logboek now under-reports, got $lost" }
         assert(LogboekWriteFailureRecorder.consume() == null) { "the outcome write failure must not linger for a later action" }
         assert(rows().size == 1)
     }

@@ -35,6 +35,7 @@ internal class ProcessingHandlerSamplingTest {
             every { mockConfig.getValue("logboekdataverwerking.enabled", Boolean::class.java) } returns false
             every { mockConfig.getOptionalValue("logboekdataverwerking.service-version", String::class.java) } returns Optional.empty()
             every { mockConfig.getOptionalValue("logboekdataverwerking.deployment-environment", String::class.java) } returns Optional.empty()
+            every { mockConfig.getOptionalValue("logboekdataverwerking.log-exception-stacktrace", String::class.java) } returns Optional.empty()
             ConfigurationLoader.configProvider = { mockConfig }
         }
 

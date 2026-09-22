@@ -619,15 +619,31 @@ internal class ProcessingHandlerTest {
         @Test
         fun `A write failure of the outcome logregel is logged, not thrown`() {
             every { mockSpan.end() } answers { LogboekWriteFailureRecorder.record(RuntimeException("postgres down")) }
+            val logregel = Logregel(original, "aanleveren", null, null)
+            var lost: List<Logregel> = emptyList()
 
             val records = captureProcessingHandlerLogs {
-                handler.recordFailedOutcome(Logregel(original, "aanleveren", null, null), IllegalStateException("x"))
+                lost = handler.recordFailedOutcome(logregel, IllegalStateException("x"))
             }
 
             assert(records.any {
                 it.level == Level.SEVERE && it.message.contains("${original.traceId}:${original.spanId}")
             }) { "expected a SEVERE pointing at the original logregel, got ${records.map { it.message }}" }
+            assert(lost == listOf(logregel)) { "the caller must be able to see the under-reporting, got $lost" }
             assert(LogboekWriteFailureRecorder.consume() == null) { "failure must be consumed, not left for a later action" }
+        }
+
+        @Test
+        fun `Returns an empty list when every outcome logregel is stored`() {
+            val lost = handler.recordFailedOutcome(
+                listOf(
+                    Logregel(original, "verwerking", null, null),
+                    Logregel(spanContext("00f067aa0ba902b7"), "verwerking", null, null),
+                ),
+                IllegalStateException("x"),
+            )
+
+            assert(lost.isEmpty()) { "nothing was lost, got $lost" }
         }
 
         @Test
@@ -651,6 +667,30 @@ internal class ProcessingHandlerTest {
             val severe = records.single { it.level == Level.SEVERE }
             assert(severe.message.contains("${second.traceId}:${second.spanId}"))
             assert(!severe.message.contains(original.spanId)) { "the stored outcome must not be reported as lost" }
+        }
+
+        @Test
+        fun `A failing write does not cost the other logregels their outcome`() {
+            val second = spanContext("00f067aa0ba902b7")
+            val out1 = mockk<Span>(relaxed = true)
+            val out2 = mockk<Span>(relaxed = true)
+            every { mockSpanBuilder.startSpan() } returnsMany listOf(out1, out2)
+            every { out1.end() } throws RuntimeException("span export exploded")
+            val first = Logregel(original, "verwerking", null, null)
+            var lost: List<Logregel> = emptyList()
+
+            val records = captureProcessingHandlerLogs {
+                lost = handler.recordFailedOutcome(
+                    listOf(first, Logregel(second, "verwerking", null, null)),
+                    IllegalStateException("x"),
+                )
+            }
+
+            verify { out2.end() }
+            val severe = records.single { it.level == Level.SEVERE }
+            assert(severe.message.contains("${original.traceId}:${original.spanId}"))
+            assert(!severe.message.contains(second.spanId)) { "only the lost logregel is reported" }
+            assert(lost == listOf(first)) { "only the lost logregel comes back, got $lost" }
         }
 
         @Test
@@ -684,12 +724,15 @@ internal class ProcessingHandlerTest {
             } returns Optional.of("ja")
             val enclosing = RuntimeException("nested logregel not stored")
             LogboekWriteFailureRecorder.record(enclosing)
+            val logregel = Logregel(original, "aanleveren", null, null)
+            var lost: List<Logregel> = emptyList()
 
             val records = captureProcessingHandlerLogs {
-                handler.recordFailedOutcome(Logregel(original, "aanleveren", null, null), IllegalStateException("x"))
+                lost = handler.recordFailedOutcome(logregel, IllegalStateException("x"))
             }
 
             assert(records.any { it.level == Level.SEVERE }) { "the lost outcome must be reported" }
+            assert(lost == listOf(logregel)) { "nothing was written, so the logregel comes back, got $lost" }
             assert(LogboekWriteFailureRecorder.consume() === enclosing) { "the enclosing action keeps its failure" }
         }
 
