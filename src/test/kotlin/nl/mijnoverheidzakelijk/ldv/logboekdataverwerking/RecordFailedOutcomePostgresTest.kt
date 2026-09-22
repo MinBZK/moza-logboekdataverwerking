@@ -129,8 +129,7 @@ internal class RecordFailedOutcomePostgresTest {
         assert(outcomes.size == 3)
         outcomes.forEach { assert(it.status == "ERROR" && it.name == "publiceren") }
 
-        // Every exported logregel gets an ERROR child, so the reading rule also holds
-        // for a query that starts at the actie-regel.
+        // The reading rule must also hold for a query that starts at the actie-regel.
         val actieOutcome = outcomes.single { it.parentSpanId == span.spanContext.spanId }
         assert("dpl.core.data_subject_id" !in actieOutcome.attributes) { "the actie-regel carries no betrokkene" }
 

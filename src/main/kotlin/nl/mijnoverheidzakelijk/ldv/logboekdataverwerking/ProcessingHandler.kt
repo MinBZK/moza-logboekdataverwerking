@@ -132,8 +132,7 @@ class ProcessingHandler {
                 child.end()
                 Logregel(child.spanContext, childName, processingActivityId, subject)
             }
-            // The subject-less action logregel leads, so an outcome hangs under it too and
-            // the reading rule holds for every exported logregel, not only the betrokkene ones.
+            // Action logregel first, so the reading rule holds for every exported logregel.
             val action = Logregel(span.spanContext, spanName(span, logboekContext), processingActivityId, null)
             return listOf(action) + children
         }
@@ -237,17 +236,13 @@ class ProcessingHandler {
      * Needs no `@Logboek` action and no request: the parent comes from the
      * [Logregel], not from the current context.
      *
-     * Never throws, so it cannot mask the failure being recorded, and never leaves a
-     * write failure of its own on the thread. A lost outcome logregel is logged at
-     * SEVERE with the `trace_id:span_id` of the logregel it belonged to, and is
-     * returned, so the caller can retry or alert: without its ERROR child that
-     * logregel reads as succeeded, and the Logboek under-reports a failed
-     * verwerking. A write failure an enclosing action left recorded on this thread
-     * is preserved for that action's fail-closed check.
-     *
-     * Loss is only visible under `span-processor=simple`, where the export runs on
-     * this thread. Under `batch` it runs on a worker thread and only the exporter's
-     * own SEVERE reports the loss, so the returned list is always empty there.
+     * Catches every exception, so it cannot mask the failure being recorded (a JVM
+     * `Error` still propagates), and leaves no write failure of its own on the
+     * thread; one an enclosing action recorded is kept for its fail-closed check.
+     * The logregels whose outcome was lost are returned and named in one SEVERE
+     * line: without an ERROR child they read as succeeded, so the Logboek
+     * under-reports. Only `span-processor=simple` exports on this thread, so under
+     * `batch` the returned list is always empty.
      *
      * @param logregels the acknowledged logregels of the failed verwerking
      * @param exception the failure
@@ -258,49 +253,45 @@ class ProcessingHandler {
         if (logregels.isEmpty()) return emptyList()
         val pending = LogboekWriteFailureRecorder.consume()
         val lost = mutableListOf<Logregel>()
+        var cause: Throwable? = null
         try {
             val stacktrace = stacktraceForExport(exception)
             for (logregel in logregels) {
                 // Per logregel, so one failure does not cost the others their outcome.
-                try {
-                    if (!writeFailedOutcome(logregel, exception, stacktrace)) lost += logregel
+                val failure = try {
+                    writeFailedOutcome(logregel, exception, stacktrace)
                 } catch (e: Exception) {
-                    reportLostOutcome(logregel, e)
+                    e
+                }
+                if (failure != null) {
                     lost += logregel
+                    if (cause == null) cause = failure
                 }
             }
         } catch (e: Exception) {
-            // Only the shared stacktrace rendering runs before the loop, so nothing was
-            // written yet. Recording the outcome must never break the verwerking
-            // (LDV 3.3.2.1); a misconfigured log-exception-stacktrace would otherwise
-            // replace the failure being recorded.
-            val ids = logregels.joinToString(
-                limit = LdvSpanExporter.DEFAULT_MAX_LOGGED_SPAN_IDS,
-                truncated = "…",
-            ) { "${it.spanContext.traceId}:${it.spanContext.spanId}" }
-            LOGGER.log(
-                Level.SEVERE,
-                "Failed to record the failed outcome; these logregels stay without ERROR logregel in the Logboek [$ids]",
-                e,
-            )
+            // Recording an outcome must never break the verwerking (LDV 3.3.2.1). Nothing
+            // was written, so report every logregel as lost: over-reporting is the safe side.
+            lost.clear()
             lost.addAll(logregels)
+            cause = e
         } finally {
             // Whatever this method recorded stays out of the enclosing action's check.
             LogboekWriteFailureRecorder.clear()
             pending?.let(LogboekWriteFailureRecorder::record)
         }
+        if (lost.isNotEmpty()) reportLostOutcomes(lost, cause)
         return lost
     }
 
     /**
-     * Writes the ERROR logregel for one [logregel], and reports it when that write is
-     * lost. Returns false when the outcome logregel was not stored.
+     * Writes the ERROR logregel for one [logregel].
+     *
+     * @return the write failure when the outcome logregel was not stored, else null
      */
-    private fun writeFailedOutcome(logregel: Logregel, exception: Throwable, stacktrace: String?): Boolean {
+    private fun writeFailedOutcome(logregel: Logregel, exception: Throwable, stacktrace: String?): Throwable? {
         val ids = "${logregel.spanContext.traceId}:${logregel.spanContext.spanId}"
         if (!logregel.spanContext.isValid) {
-            // Span.wrap of an invalid context yields no parent, so the outcome starts a
-            // trace of its own: still findable by betrokkene, no longer from its logregel.
+            // Span.wrap of an invalid context yields no parent, so the outcome starts its own trace.
             LOGGER.warning(
                 "Logregel '${logregel.name}' has no valid span context [$ids]; " +
                     "its outcome logregel is written unlinked, as the root of a new trace"
@@ -313,21 +304,19 @@ class ProcessingHandler {
         span.setStatus(StatusCode.ERROR, exception.message ?: "")
         applyException(span, exception, stacktrace)
         span.end()
-        // Only the synchronous exporter relays a write failure to this thread, so under
-        // BATCH a lost outcome logregel cannot be reported as lost here.
-        val failure = LogboekWriteFailureRecorder.consume()
-        failure?.let { reportLostOutcome(logregel, it) }
-        return failure == null
+        // Only the synchronous exporter relays write failures to this thread; BATCH reports none.
+        return LogboekWriteFailureRecorder.consume()
     }
 
-    /** One SEVERE per logregel that stays behind without its ERROR logregel. */
-    private fun reportLostOutcome(logregel: Logregel, cause: Throwable) {
-        LOGGER.log(
-            Level.SEVERE,
-            "Failed to store the outcome logregel; this logregel stays without ERROR logregel in the Logboek " +
-                "[${logregel.spanContext.traceId}:${logregel.spanContext.spanId}]",
-            cause,
-        )
+    /** One bounded SEVERE for the logregels that stay behind without their ERROR logregel. */
+    private fun reportLostOutcomes(lost: List<Logregel>, cause: Throwable?) {
+        val ids = lost.joinToString(
+            limit = LdvSpanExporter.DEFAULT_MAX_LOGGED_SPAN_IDS,
+            truncated = "…",
+        ) { "${it.spanContext.traceId}:${it.spanContext.spanId}" }
+        val message = "Failed to record the outcome of ${lost.size} logregel(s); " +
+            "they stay without ERROR logregel in the Logboek [$ids]"
+        if (cause == null) LOGGER.severe(message) else LOGGER.log(Level.SEVERE, message, cause)
     }
 
     /**
@@ -376,9 +365,8 @@ class ProcessingHandler {
          */
         @Throws(ConfigurationException::class)
         internal fun initOpenTelemetry(): OpenTelemetry {
-            // Read here so an invalid value fails loud at startup. It is read again per
-            // exception, from the interceptor's finally, where throwing would replace
-            // the verwerking's own exception.
+            // Fail loud here: read again from the interceptor's finally, where throwing
+            // would replace the verwerking's own exception.
             val logExceptionStacktrace = ConfigurationLoader.logExceptionStacktrace
             LOGGER.info(
                 "Initializing LDV OpenTelemetry for service: $serviceName " +

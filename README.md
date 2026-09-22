@@ -253,8 +253,7 @@ De mislukte uitkomst leg je daarom vast als eigen logregel. `recordFailedOutcome
 **Leesregel:** een logregel zonder ERROR-child is geslaagd. Dit is een MOZa-afspraak; de standaard kent deze leesregel nog niet (Logius-standaarden/logboek-dataverwerkingen#314). Een logregel voor een verwerking die uiteindelijk niet doorging is binnen de standaard acceptabel: over-rapporteren is de veilige kant.
 
 ```kotlin
-// Buiten een @Logboek-actie doet niets dit voor je: een pooled thread kan nog een
-// schrijffout van een eerdere request dragen, en die zou hieronder aanslaan.
+// Buiten een @Logboek-actie: een pooled thread kan nog een schrijffout van een eerdere request dragen.
 LogboekWriteFailureRecorder.clear()
 
 val span = handler.startSpan("aanleveren", null)
@@ -278,7 +277,7 @@ try {
 }
 ```
 
-`recordFailedOutcome` heeft geen `@Logboek`-actie en geen actieve request nodig: de parent komt uit de `Logregel`, niet uit de huidige context. Wie zijn spans zelf beheert en alleen een `SpanContext` bewaart, bouwt de `Logregel` zelf. De methode gooit nooit: een schrijffout van de uitkomst-regel mag de oorspronkelijke fout niet maskeren. Zo'n schrijffout wordt op SEVERE gelogd met de `trace_id:span_id` van de regel waar de uitkomst bij hoorde, en de betreffende logregels komen terug als resultaat. Een lege lijst betekent dat iedere uitkomst-regel bevestigd is; een niet-lege lijst betekent onder-rapportage, want zonder ERROR-child leest die logregel als geslaagd. Wat daarop volgt is aan de afnemer: opnieuw proberen of alarmeren. Dit verlies is alleen zichtbaar onder `simple`, waar de export op de eigen thread loopt; onder `batch` meldt alleen de exporter zelf het verlies en is de lijst dus altijd leeg. Een schrijffout die een omliggende actie nog had openstaan blijft staan voor de fail-closed-controle van die actie.
+`recordFailedOutcome` heeft geen `@Logboek`-actie en geen actieve request nodig: de parent komt uit de `Logregel`, niet uit de huidige context. Wie zijn spans zelf beheert en alleen een `SpanContext` bewaart, bouwt de `Logregel` zelf. De methode vangt elke exception af: een schrijffout van de uitkomst-regel mag de oorspronkelijke fout niet maskeren. De logregels waarvan de uitkomst-regel niet is opgeslagen komen terug als resultaat, en staan met hun `trace_id:span_id` in één SEVERE-regel. Een lege lijst betekent dat iedere uitkomst-regel bevestigd is; een niet-lege lijst betekent onder-rapportage, want zonder ERROR-child leest die logregel als geslaagd. Wat daarop volgt is aan de afnemer: opnieuw proberen of alarmeren. Dit verlies is alleen zichtbaar onder `simple`, waar de export op de eigen thread loopt; onder `batch` meldt alleen de exporter zelf het verlies en is de lijst dus altijd leeg. Een schrijffout die een omliggende actie nog had openstaan blijft staan voor de fail-closed-controle van die actie.
 
 ### Foutdetails en dataminimalisatie
 
