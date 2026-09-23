@@ -7,6 +7,7 @@ import io.opentelemetry.context.propagation.TextMapGetter
 import nl.mijnoverheidzakelijk.ldv.config.ConfigurationLoader
 import nl.mijnoverheidzakelijk.ldv.exporter.LogboekWriteFailureRecorder
 
+import jakarta.annotation.Priority
 import jakarta.inject.Inject
 import jakarta.interceptor.AroundInvoke
 import jakarta.interceptor.Interceptor
@@ -23,8 +24,18 @@ import java.util.logging.Logger
  * It extracts an existing trace context from inbound HTTP headers
  * (if present) using the W3C Trace Context format and enriches the span with Logboek
  * attributes before ending it.
+ *
+ * Priority [Interceptor.Priority.APPLICATION] nests the interceptor inside the
+ * `@Transactional` interceptor of Quarkus (`PLATFORM_BEFORE + 200`), so the
+ * fail-closed acknowledgement throws before the commit and the transaction rolls
+ * back. That needs the transaction to enclose the `@Logboek` action: `@Logboek` on
+ * the resource with `@Transactional` on the service method still commits inside
+ * `proceed()`, before the acknowledgement. The priority also nests the interceptor
+ * inside the Quarkus security interceptors (`PLATFORM_BEFORE + 150`): a denied
+ * call produces no logregel.
  */
 @Logboek
+@Priority(Interceptor.Priority.APPLICATION)
 @Interceptor
 class LogboekInterceptor {
 

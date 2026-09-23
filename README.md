@@ -242,6 +242,16 @@ De afdwinging is thread-gebonden: een `@Logboek`-actie die op een andere thread 
 
 Gaat een export mis, dan wordt zo veel mogelijk gered: het mappen van een span naar een databaserij gebeurt per span, dus één onverwerkbare span laat de rest van de batch niet sneuvelen. De insert zelf is wél alles-of-niets — een half weggeschreven batch is een niet te interpreteren logregel. In beide gevallen levert verlies een mislukte export op (dus `fail-closed` slaat aan) en worden de `trace_id:span_id` van de verloren logregels op SEVERE gelogd.
 
+### Interceptorvolgorde en transacties
+
+`LogboekInterceptor` heeft prioriteit `Interceptor.Priority.APPLICATION` (2000). De `@Transactional`-interceptor van Quarkus staat op `PLATFORM_BEFORE + 200`, en de lagere waarde draait als buitenste. Bij een methode met `@Logboek` én `@Transactional` is de volgorde daardoor: transactie opent, logregel start, methode draait, logregel eindigt en wordt geëxporteerd, acknowledgement, commit.
+
+Onder `simple` + `fail-closed` volgt daaruit een garantie voor databasemutaties: kan de logregel niet worden opgeslagen, dan gooit de interceptor de `LogboekWriteException` vóór de commit en rolt de transactie terug. Er is dan geen logregel en geen verwerking. Slaagt de export en mislukt daarna de commit, dan staat er een logregel voor een teruggerolde verwerking. Dat is over-rapporteren, de kant die de standaard toestaat. De garantie vereist dat de transactie de `@Logboek`-actie omsluit: met `@Logboek` op de resource en `@Transactional` op de servicemethode commit de transactie binnen de methode, dus nog steeds vóór de acknowledgement. Zet `@Transactional` dan op dezelfde methode of op een omsluitende.
+
+Kanttekening: de garantie geldt voor wat de transactie terugdraait. Een externe bijwerking binnen de methode, zoals een verstuurde e-mail, blijft staan; daarvoor blijft de logregel-vooraf-aanpak nodig. De logregel krijgt zijn eindtijd vóór de commit, dus de duur van de commit valt buiten de logregel.
+
+Dezelfde prioriteit plaatst de interceptor binnen de security-interceptors van Quarkus (`@RolesAllowed`, `@Authenticated`, `@DenyAll`, prioriteit `PLATFORM_BEFORE + 150`). Een geweigerde aanroep bereikt de methode niet en levert geen logregel op: er heeft geen verwerking plaatsgevonden.
+
 ### Foutdetails en dataminimalisatie
 
 Error-logregels krijgen altijd `exception.type` en `exception.message`; bij meerdere betrokkenen draagt iedere betrokkene-logregel dezelfde foutdata (conform de foutdata-velden uit de standaard). De volledige `exception.stacktrace` wordt alleen opgeslagen als `logboekdataverwerking.log-exception-stacktrace=true`; standaard staat dit uit, omdat stacktraces groot zijn en persoonsgegevens kunnen bevatten (dataminimalisatie, AVG art. 5(1)(c)). Houd om dezelfde reden persoonsgegevens buiten exception-messages: het bericht wordt ongefilterd in het Logboek opgeslagen, gekoppeld aan de betrokkene.
