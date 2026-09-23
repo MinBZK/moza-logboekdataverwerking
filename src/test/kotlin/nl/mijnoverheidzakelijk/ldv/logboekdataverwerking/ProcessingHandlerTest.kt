@@ -694,6 +694,22 @@ internal class ProcessingHandlerTest {
         }
 
         @Test
+        fun `A JVM Error from the write is reported as lost, not thrown`() {
+            every { mockSpan.end() } throws OutOfMemoryError("exporter ran out of heap")
+            val logregel = Logregel(original, "aanleveren", null, null)
+            var lost: List<Logregel> = emptyList()
+
+            val records = captureProcessingHandlerLogs {
+                lost = handler.recordFailedOutcome(logregel, IllegalStateException("x"))
+            }
+
+            val severe = records.single { it.level == Level.SEVERE }
+            assert(severe.thrown is OutOfMemoryError) { "the Error is the reported cause, got ${severe.thrown}" }
+            assert(lost == listOf(logregel)) { "the caller must be able to see the under-reporting, got $lost" }
+            assert(LogboekWriteFailureRecorder.consume() == null) { "nothing may linger on the thread" }
+        }
+
+        @Test
         fun `Warns when the logregel has no valid span context`() {
             val records = captureProcessingHandlerLogs {
                 handler.recordFailedOutcome(

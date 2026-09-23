@@ -236,9 +236,9 @@ class ProcessingHandler {
      * Needs no `@Logboek` action and no request: the parent comes from the
      * [Logregel], not from the current context.
      *
-     * Catches every exception, so it cannot mask the failure being recorded (a JVM
-     * `Error` still propagates), and leaves no write failure of its own on the
-     * thread; one an enclosing action recorded is kept for its fail-closed check.
+     * Catches every Throwable, so it can never mask the failure being recorded, and
+     * leaves no write failure of its own on the thread; one an enclosing action
+     * recorded is kept for its fail-closed check.
      * The logregels whose outcome was lost are returned and named in one SEVERE
      * line: without an ERROR child they read as succeeded, so the Logboek
      * under-reports. Only `span-processor=simple` exports on this thread, so under
@@ -260,7 +260,7 @@ class ProcessingHandler {
                 // Per logregel, so one failure does not cost the others their outcome.
                 val failure = try {
                     writeFailedOutcome(logregel, exception, stacktrace)
-                } catch (e: Exception) {
+                } catch (e: Throwable) {
                     e
                 }
                 if (failure != null) {
@@ -268,7 +268,7 @@ class ProcessingHandler {
                     if (cause == null) cause = failure
                 }
             }
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             // Recording an outcome must never break the verwerking (LDV 3.3.2.1). Nothing
             // was written, so report every logregel as lost: over-reporting is the safe side.
             lost.clear()
