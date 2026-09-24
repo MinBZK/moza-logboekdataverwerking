@@ -3,11 +3,15 @@ package nl.mijnoverheidzakelijk.ldv.logboekdataverwerking
 import io.mockk.clearAllMocks
 import io.mockk.every
 import io.mockk.mockk
+import io.mockk.slot
 import io.mockk.verify
 import io.opentelemetry.api.OpenTelemetry
 import io.opentelemetry.api.trace.Span
 import io.opentelemetry.api.trace.SpanBuilder
+import io.opentelemetry.api.trace.SpanContext
 import io.opentelemetry.api.trace.StatusCode
+import io.opentelemetry.api.trace.TraceFlags
+import io.opentelemetry.api.trace.TraceState
 import io.opentelemetry.api.trace.Tracer
 import io.opentelemetry.context.Context
 import nl.mijnoverheidzakelijk.ldv.config.ConfigurationLoader
@@ -469,7 +473,309 @@ internal class ProcessingHandlerTest {
             }
             verify(inverse = true) { mockSpan.setStatus(any()) }
         }
+
+        @Test
+        fun `Returns the action span as the logregel for a single betrokkene`() {
+            val spanContext = spanContext("b7ad6b7169203331")
+            every { mockSpan.spanContext } returns spanContext
+            val logboekContext = LogboekContext().apply {
+                processingActivityId = "https://register.example.org/activiteiten/activity-123"
+                dataSubjectId = "subject-1"
+                dataSubjectType = "BSN"
+                actionName = "aanleveren"
+            }
+
+            val logregels = handler.addLogboekContextToSpan(mockSpan, logboekContext)
+
+            assert(
+                logregels == listOf(
+                    Logregel(
+                        spanContext,
+                        "aanleveren",
+                        "https://register.example.org/activiteiten/activity-123",
+                        DataSubject("subject-1", "BSN"),
+                    )
+                )
+            ) { "got $logregels" }
+        }
+
+        @Test
+        fun `Returns a logregel without betrokkene when none is set`() {
+            val logboekContext = LogboekContext().apply {
+                processingActivityId = "https://register.example.org/activiteiten/activity-123"
+            }
+
+            val logregels = handler.addLogboekContextToSpan(mockSpan, logboekContext)
+
+            assert(logregels.single().subject == null)
+        }
+
+        @Test
+        fun `Returns the action logregel and one per betrokkene-child for multiple betrokkenen`() {
+            every { mockSpan.spanContext } returns spanContext("aaaaaaaaaaaaaaaa")
+            val logboekContext = LogboekContext().apply {
+                addSubject("subject-1", "BSN")
+                addSubject("subject-2", "KVK")
+            }
+            val child1 = mockk<Span>(relaxed = true)
+            val child2 = mockk<Span>(relaxed = true)
+            every { child1.spanContext } returns spanContext("00f067aa0ba902b7")
+            every { child2.spanContext } returns spanContext("b7ad6b7169203331")
+            every { mockSpanBuilder.startSpan() } returnsMany listOf(child1, child2)
+
+            val logregels = handler.addLogboekContextToSpan(mockSpan, logboekContext)
+
+            assert(
+                logregels.map { it.spanContext.spanId } ==
+                    listOf("aaaaaaaaaaaaaaaa", "00f067aa0ba902b7", "b7ad6b7169203331")
+            ) { "the action logregel leads, so it gets an outcome too; got $logregels" }
+            assert(logregels.first().subject == null) { "the action logregel stays subject-less" }
+            assert(
+                logregels.drop(1).map { it.subject } ==
+                    listOf(DataSubject("subject-1", "BSN"), DataSubject("subject-2", "KVK"))
+            )
+            assert(logregels.all { it.name == "verwerking-betrokkene" && it.processingActivityId == null })
+        }
     }
+
+    @Nested
+    @DisplayName("recordFailedOutcome")
+    inner class RecordFailedOutcomeTests {
+
+        private val original = spanContext("b7ad6b7169203331")
+        private val activity = "https://register.example.org/activiteiten/activity-123"
+
+        @BeforeEach
+        fun stacktraceOffByDefault() {
+            every {
+                mockConfig.getOptionalValue("logboekdataverwerking.log-exception-stacktrace", String::class.java)
+            } returns Optional.empty()
+        }
+
+        @AfterEach
+        fun clearRecorder() = LogboekWriteFailureRecorder.clear()
+
+        @Test
+        fun `Writes one ERROR logregel under the original with the same LDV fields`() {
+            val parent = slot<Context>()
+            every { mockSpanBuilder.setParent(capture(parent)) } returns mockSpanBuilder
+
+            handler.recordFailedOutcome(
+                Logregel(original, "aanleveren", activity, DataSubject("subject-1", "BSN")),
+                IllegalStateException("levering mislukt"),
+            )
+
+            verify { mockTracer.spanBuilder("aanleveren") }
+            assert(Span.fromContext(parent.captured).spanContext == original) { "parent must be the original logregel" }
+            verify { mockSpan.setAttribute(ProcessingHandler.OUTCOME_ATTRIBUTE_KEY, ProcessingHandler.OUTCOME_FAILED) }
+            verify { mockSpan.setAttribute("dpl.core.processing_activity_id", activity) }
+            verify { mockSpan.setAttribute("dpl.core.data_subject_id", "subject-1") }
+            verify { mockSpan.setAttribute("dpl.core.data_subject_id_type", "BSN") }
+            verify { mockSpan.setStatus(StatusCode.ERROR, "levering mislukt") }
+            verify { mockSpan.setAttribute("exception.type", "java.lang.IllegalStateException") }
+            verify { mockSpan.setAttribute("exception.message", "levering mislukt") }
+            verify(inverse = true) { mockSpan.setAttribute("exception.stacktrace", any<String>()) }
+            verify { mockSpan.end() }
+        }
+
+        @Test
+        fun `Writes one outcome logregel per betrokkene-logregel`() {
+            val second = spanContext("00f067aa0ba902b7")
+            val out1 = mockk<Span>(relaxed = true)
+            val out2 = mockk<Span>(relaxed = true)
+            every { mockSpanBuilder.startSpan() } returnsMany listOf(out1, out2)
+            val parents = mutableListOf<Context>()
+            every { mockSpanBuilder.setParent(capture(parents)) } returns mockSpanBuilder
+
+            handler.recordFailedOutcome(
+                listOf(
+                    Logregel(original, "verwerking", null, DataSubject("subject-1", "BSN")),
+                    Logregel(second, "verwerking", null, DataSubject("subject-2", "KVK")),
+                ),
+                RuntimeException("boom"),
+            )
+
+            assert(parents.map { Span.fromContext(it).spanContext } == listOf(original, second))
+            verify { out1.setAttribute("dpl.core.data_subject_id", "subject-1") }
+            verify { out2.setAttribute("dpl.core.data_subject_id", "subject-2") }
+            verify(inverse = true) { out1.setAttribute("dpl.core.processing_activity_id", any<String>()) }
+            listOf(out1, out2).forEach { out ->
+                verify { out.setStatus(StatusCode.ERROR, "boom") }
+                verify { out.end() }
+            }
+        }
+
+        @Test
+        fun `Stores the stacktrace on opt-in`() {
+            every {
+                mockConfig.getOptionalValue("logboekdataverwerking.log-exception-stacktrace", String::class.java)
+            } returns Optional.of("true")
+
+            handler.recordFailedOutcome(Logregel(original, "aanleveren", null, null), IllegalStateException("x"))
+
+            verify { mockSpan.setAttribute("exception.stacktrace", match<String> { it.contains("IllegalStateException") }) }
+        }
+
+        @Test
+        fun `A write failure of the outcome logregel is logged, not thrown`() {
+            every { mockSpan.end() } answers { LogboekWriteFailureRecorder.record(RuntimeException("postgres down")) }
+            val logregel = Logregel(original, "aanleveren", null, null)
+            var lost: List<Logregel> = emptyList()
+
+            val records = captureProcessingHandlerLogs {
+                lost = handler.recordFailedOutcome(logregel, IllegalStateException("x"))
+            }
+
+            assert(records.any {
+                it.level == Level.SEVERE && it.message.contains("${original.traceId}:${original.spanId}")
+            }) { "expected a SEVERE pointing at the original logregel, got ${records.map { it.message }}" }
+            assert(lost == listOf(logregel)) { "the caller must be able to see the under-reporting, got $lost" }
+            assert(LogboekWriteFailureRecorder.consume() == null) { "failure must be consumed, not left for a later action" }
+        }
+
+        @Test
+        fun `Returns an empty list when every outcome logregel is stored`() {
+            val lost = handler.recordFailedOutcome(
+                listOf(
+                    Logregel(original, "verwerking", null, null),
+                    Logregel(spanContext("00f067aa0ba902b7"), "verwerking", null, null),
+                ),
+                IllegalStateException("x"),
+            )
+
+            assert(lost.isEmpty()) { "nothing was lost, got $lost" }
+        }
+
+        @Test
+        fun `The write failure names only the logregel whose outcome was lost`() {
+            val second = spanContext("00f067aa0ba902b7")
+            val out1 = mockk<Span>(relaxed = true)
+            val out2 = mockk<Span>(relaxed = true)
+            every { mockSpanBuilder.startSpan() } returnsMany listOf(out1, out2)
+            every { out2.end() } answers { LogboekWriteFailureRecorder.record(RuntimeException("postgres down")) }
+
+            val records = captureProcessingHandlerLogs {
+                handler.recordFailedOutcome(
+                    listOf(
+                        Logregel(original, "verwerking", null, null),
+                        Logregel(second, "verwerking", null, null),
+                    ),
+                    IllegalStateException("x"),
+                )
+            }
+
+            val severe = records.single { it.level == Level.SEVERE }
+            assert(severe.message.contains("${second.traceId}:${second.spanId}"))
+            assert(!severe.message.contains(original.spanId)) { "the stored outcome must not be reported as lost" }
+        }
+
+        @Test
+        fun `A failing write does not cost the other logregels their outcome`() {
+            val second = spanContext("00f067aa0ba902b7")
+            val out1 = mockk<Span>(relaxed = true)
+            val out2 = mockk<Span>(relaxed = true)
+            every { mockSpanBuilder.startSpan() } returnsMany listOf(out1, out2)
+            every { out1.end() } throws RuntimeException("span export exploded")
+            val first = Logregel(original, "verwerking", null, null)
+            var lost: List<Logregel> = emptyList()
+
+            val records = captureProcessingHandlerLogs {
+                lost = handler.recordFailedOutcome(
+                    listOf(first, Logregel(second, "verwerking", null, null)),
+                    IllegalStateException("x"),
+                )
+            }
+
+            verify { out2.end() }
+            val severe = records.single { it.level == Level.SEVERE }
+            assert(severe.message.contains("${original.traceId}:${original.spanId}"))
+            assert(!severe.message.contains(second.spanId)) { "only the lost logregel is reported" }
+            assert(lost == listOf(first)) { "only the lost logregel comes back, got $lost" }
+        }
+
+        @Test
+        fun `A JVM Error from the write is reported as lost, not thrown`() {
+            every { mockSpan.end() } throws OutOfMemoryError("exporter ran out of heap")
+            val logregel = Logregel(original, "aanleveren", null, null)
+            var lost: List<Logregel> = emptyList()
+
+            val records = captureProcessingHandlerLogs {
+                lost = handler.recordFailedOutcome(logregel, IllegalStateException("x"))
+            }
+
+            val severe = records.single { it.level == Level.SEVERE }
+            assert(severe.thrown is OutOfMemoryError) { "the Error is the reported cause, got ${severe.thrown}" }
+            assert(lost == listOf(logregel)) { "the caller must be able to see the under-reporting, got $lost" }
+            assert(LogboekWriteFailureRecorder.consume() == null) { "nothing may linger on the thread" }
+        }
+
+        @Test
+        fun `Warns when the logregel has no valid span context`() {
+            val records = captureProcessingHandlerLogs {
+                handler.recordFailedOutcome(
+                    Logregel(SpanContext.getInvalid(), "aanleveren", null, null),
+                    IllegalStateException("x"),
+                )
+            }
+
+            assert(records.any { it.level == Level.WARNING && it.message.contains("unlinked") }) {
+                "expected a warning about the unlinked outcome, got ${records.map { it.message }}"
+            }
+        }
+
+        @Test
+        fun `Preserves a write failure an enclosing action left recorded`() {
+            val enclosing = RuntimeException("nested logregel not stored")
+            LogboekWriteFailureRecorder.record(enclosing)
+
+            handler.recordFailedOutcome(Logregel(original, "aanleveren", null, null), IllegalStateException("x"))
+
+            assert(LogboekWriteFailureRecorder.consume() === enclosing)
+        }
+
+        @Test
+        fun `An unreadable stacktrace setting neither throws nor loses an enclosing failure`() {
+            every {
+                mockConfig.getOptionalValue("logboekdataverwerking.log-exception-stacktrace", String::class.java)
+            } returns Optional.of("ja")
+            val enclosing = RuntimeException("nested logregel not stored")
+            LogboekWriteFailureRecorder.record(enclosing)
+            val logregel = Logregel(original, "aanleveren", null, null)
+            var lost: List<Logregel> = emptyList()
+
+            val records = captureProcessingHandlerLogs {
+                lost = handler.recordFailedOutcome(logregel, IllegalStateException("x"))
+            }
+
+            assert(records.any { it.level == Level.SEVERE }) { "the lost outcome must be reported" }
+            assert(lost == listOf(logregel)) { "nothing was written, so the logregel comes back, got $lost" }
+            assert(LogboekWriteFailureRecorder.consume() === enclosing) { "the enclosing action keeps its failure" }
+        }
+
+        private fun captureProcessingHandlerLogs(block: () -> Unit): List<LogRecord> {
+            val records = mutableListOf<LogRecord>()
+            val capture = object : Handler() {
+                override fun publish(record: LogRecord) { records.add(record) }
+                override fun flush() {}
+                override fun close() {}
+            }
+            val logger = Logger.getLogger(ProcessingHandler::class.java.name)
+            logger.addHandler(capture)
+            try {
+                block()
+            } finally {
+                logger.removeHandler(capture)
+            }
+            return records
+        }
+    }
+
+    private fun spanContext(spanId: String): SpanContext = SpanContext.create(
+        "0af7651916cd43dd8448eb211c80319c",
+        spanId,
+        TraceFlags.getSampled(),
+        TraceState.getDefault(),
+    )
 
     @Nested
     @DisplayName("enforceWriteAcknowledgement")

@@ -242,6 +242,43 @@ De afdwinging is thread-gebonden: een `@Logboek`-actie die op een andere thread 
 
 Gaat een export mis, dan wordt zo veel mogelijk gered: het mappen van een span naar een databaserij gebeurt per span, dus één onverwerkbare span laat de rest van de batch niet sneuvelen. De insert zelf is wél alles-of-niets — een half weggeschreven batch is een niet te interpreteren logregel. In beide gevallen levert verlies een mislukte export op (dus `fail-closed` slaat aan) en worden de `trace_id:span_id` van de verloren logregels op SEVERE gelogd.
 
+### Logregel vooraf, uitkomst achteraf
+
+Wie de acknowledgement-eis strikt neemt, schrijft de logregel vóór de verwerking: `simple` + `fail-closed`, en pas na `enforceWriteAcknowledgement` de opslag of levering. Kan de logregel niet worden geschreven, dan vindt de verwerking niet plaats. Op dat moment is de uitkomst nog onbekend. Faalt de verwerking daarna, dan blijft de logregel met status `UNSET` staan, wat de standaard leest als "afgerond zonder systeemfout". Een geëxporteerde logregel is definitief en de tabel is insert-only.
+
+De mislukte uitkomst leg je daarom vast als eigen logregel. `recordFailedOutcome` schrijft per bevestigde logregel één ERROR-regel met de oorspronkelijke regel als `parent_span_id`, dezelfde naam, dezelfde verwerkingsactiviteit, dezelfde betrokkene en de `exception.*`-attributen (stacktrace alleen bij opt-in). Het attribuut `moza.ldv.uitkomst=mislukt` onderscheidt een uitkomst-regel van de per-betrokkene regels, die dezelfde parent dragen. Het succespad schrijft niets extra.
+
+`addLogboekContextToSpan` geeft alle geëxporteerde regels terug: de actie-regel, en bij meerdere betrokkenen ook de regel per betrokkene. Iedere regel krijgt zijn eigen uitkomst-regel, zodat de uitkomst vindbaar is vanaf de actie-regel én vanaf de regel die een betrokkene bij een inzage ziet.
+
+**Leesregel:** een logregel zonder ERROR-child is geslaagd. Dit is een MOZa-afspraak; de standaard kent deze leesregel nog niet (Logius-standaarden/logboek-dataverwerkingen#314). Een logregel voor een verwerking die uiteindelijk niet doorging is binnen de standaard acceptabel: over-rapporteren is de veilige kant.
+
+```kotlin
+// Buiten een @Logboek-actie: een pooled thread kan nog een schrijffout van een eerdere request dragen.
+LogboekWriteFailureRecorder.clear()
+
+val span = handler.startSpan("aanleveren", null)
+val context = LogboekContext().apply {
+    processingActivityId = "https://register.example.org/activiteiten/aanleveren"
+    dataSubjectId = "000000000"
+    dataSubjectType = "KVK"
+}
+val logregels = handler.addLogboekContextToSpan(span, context)
+span.end()
+handler.enforceWriteAcknowledgement()
+
+try {
+    lever(bericht)
+} catch (e: Exception) {
+    val zonderUitkomst = handler.recordFailedOutcome(logregels, e)
+    if (zonderUitkomst.isNotEmpty()) {
+        alarmeer(zonderUitkomst)
+    }
+    throw e
+}
+```
+
+`recordFailedOutcome` heeft geen `@Logboek`-actie en geen actieve request nodig: de parent komt uit de `Logregel`, niet uit de huidige context. Wie zijn spans zelf beheert en alleen een `SpanContext` bewaart, bouwt de `Logregel` zelf. De methode vangt alles af, ook een JVM `Error`: een schrijffout van de uitkomst-regel mag de oorspronkelijke fout niet maskeren. De logregels waarvan de uitkomst-regel niet is opgeslagen komen terug als resultaat, en staan met hun `trace_id:span_id` in één SEVERE-regel. Een lege lijst betekent dat iedere uitkomst-regel bevestigd is; een niet-lege lijst betekent onder-rapportage, want zonder ERROR-child leest die logregel als geslaagd. Wat daarop volgt is aan de afnemer: opnieuw proberen of alarmeren. Dit verlies is alleen zichtbaar onder `simple`, waar de export op de eigen thread loopt; onder `batch` meldt alleen de exporter zelf het verlies en is de lijst dus altijd leeg. Een schrijffout die een omliggende actie nog had openstaan blijft staan voor de fail-closed-controle van die actie.
+
 ### Foutdetails en dataminimalisatie
 
 Error-logregels krijgen altijd `exception.type` en `exception.message`; bij meerdere betrokkenen draagt iedere betrokkene-logregel dezelfde foutdata (conform de foutdata-velden uit de standaard). De volledige `exception.stacktrace` wordt alleen opgeslagen als `logboekdataverwerking.log-exception-stacktrace=true`; standaard staat dit uit, omdat stacktraces groot zijn en persoonsgegevens kunnen bevatten (dataminimalisatie, AVG art. 5(1)(c)). Houd om dezelfde reden persoonsgegevens buiten exception-messages: het bericht wordt ongefilterd in het Logboek opgeslagen, gekoppeld aan de betrokkene.
