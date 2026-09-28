@@ -208,7 +208,7 @@
         <dependency>
             <groupId>io.zonky.test</groupId>
             <artifactId>embedded-postgres</artifactId>
-            <version>2.1.0</version>
+            <version>2.2.2</version>
             <scope>test</scope>
         </dependency>
         <!-- embedded-postgres only bundles amd64 binaries; arm64 JDKs (Apple Silicon, arm64 runners) need these. -->
