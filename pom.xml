@@ -6,7 +6,7 @@
 
     <groupId>nl.mijnoverheidzakelijk.ldv</groupId>
     <artifactId>logboekdataverwerking-wrapper</artifactId>
-    <version>2.0.1</version>
+    <version>2.1.0</version>
 
     <name>Logboek Dataverwerkingen Clickhouse</name>
     <description>JVM utilities to integrate the Logboek Dataverwerkingen (LDV) standard using a Clickhouse DB by Logius.</description>
@@ -84,6 +84,12 @@
                 <version>2.22.2</version>
                 <type>pom</type>
                 <scope>import</scope>
+            </dependency>
+            <!-- quarkus-bom would downgrade the ClickHouse client's lz4-java. -->
+            <dependency>
+                <groupId>at.yawk.lz4</groupId>
+                <artifactId>lz4-java</artifactId>
+                <version>1.10.4</version>
             </dependency>
             <!-- Quarkus container for the test scope only. Imported after junit-bom, so
                  junit-bom wins for the JUnit artifacts (first import wins). -->
@@ -248,7 +254,7 @@
              to @Transactional, the way consumers run it. -->
         <dependency>
             <groupId>io.quarkus</groupId>
-            <artifactId>quarkus-junit5</artifactId>
+            <artifactId>quarkus-junit</artifactId>
             <scope>test</scope>
         </dependency>
         <dependency>

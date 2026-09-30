@@ -30,8 +30,11 @@ import java.util.logging.Logger
  * fail-closed acknowledgement throws before the commit and the transaction rolls
  * back. That needs the transaction to enclose the `@Logboek` action: `@Logboek` on
  * the resource with `@Transactional` on the service method still commits inside
- * `proceed()`, before the acknowledgement. The priority also nests the interceptor
- * inside the Quarkus security interceptors (`PLATFORM_BEFORE + 150`): a denied
+ * `proceed()`, before the acknowledgement. It also does not hold when the method
+ * throws an unannounced exception the transaction commits on (a checked exception,
+ * or one in `dontRollbackOn`): the interceptor then does not throw, so a failed
+ * write leaves the mutation committed without a logregel. The priority also nests
+ * the interceptor inside the Quarkus security interceptors (`PLATFORM_BEFORE + 150`): a denied
  * call produces no logregel.
  */
 @Logboek
