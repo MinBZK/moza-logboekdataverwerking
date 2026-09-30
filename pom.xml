@@ -69,6 +69,22 @@
                 <type>pom</type>
                 <scope>import</scope>
             </dependency>
+            <!-- Imported before quarkus-bom (first import wins), so the runtime
+                 OpenTelemetry and Jackson modules keep one version each. -->
+            <dependency>
+                <groupId>io.opentelemetry</groupId>
+                <artifactId>opentelemetry-bom</artifactId>
+                <version>1.66.0</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+            <dependency>
+                <groupId>com.fasterxml.jackson</groupId>
+                <artifactId>jackson-bom</artifactId>
+                <version>2.22.2</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
             <!-- Quarkus container for the test scope only. Imported after junit-bom, so
                  junit-bom wins for the JUnit artifacts (first import wins). -->
             <dependency>
@@ -107,17 +123,14 @@
         <dependency>
             <groupId>io.opentelemetry</groupId>
             <artifactId>opentelemetry-api</artifactId>
-            <version>1.66.0</version>
         </dependency>
         <dependency>
             <groupId>io.opentelemetry</groupId>
             <artifactId>opentelemetry-exporter-otlp</artifactId>
-            <version>1.66.0</version>
         </dependency>
         <dependency>
             <groupId>io.opentelemetry</groupId>
             <artifactId>opentelemetry-sdk</artifactId>
-            <version>1.66.0</version>
         </dependency>
         <dependency>
             <groupId>org.apache.commons</groupId>
@@ -132,7 +145,6 @@
         <dependency>
             <groupId>com.fasterxml.jackson.core</groupId>
             <artifactId>jackson-databind</artifactId>
-            <version>2.22.2</version>
         </dependency>
 
         <!-- Add SnakeYAML for YAML support -->
