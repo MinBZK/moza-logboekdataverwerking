@@ -25,17 +25,10 @@ import java.util.logging.Logger
  * (if present) using the W3C Trace Context format and enriches the span with Logboek
  * attributes before ending it.
  *
- * Priority [Interceptor.Priority.APPLICATION] nests the interceptor inside the
- * `@Transactional` interceptor of Quarkus (`PLATFORM_BEFORE + 200`), so the
- * fail-closed acknowledgement throws before the commit and the transaction rolls
- * back. That needs the transaction to enclose the `@Logboek` action: `@Logboek` on
- * the resource with `@Transactional` on the service method still commits inside
- * `proceed()`, before the acknowledgement. It also does not hold when the method
- * throws an unannounced exception the transaction commits on (a checked exception,
- * or one in `dontRollbackOn`): the interceptor then does not throw, so a failed
- * write leaves the mutation committed without a logregel. The priority also nests
- * the interceptor inside the Quarkus security interceptors (`PLATFORM_BEFORE + 150`): a denied
- * call produces no logregel.
+ * Priority [Interceptor.Priority.APPLICATION] runs the interceptor inside the
+ * Quarkus `@Transactional` (`PLATFORM_BEFORE + 200`), security (`+ 150`) and
+ * cache (`+ 2`) interceptors, so a fail-closed write failure throws before the
+ * commit. Consequences and limits: README, "Interceptorvolgorde en transacties".
  */
 @Logboek
 @Priority(Interceptor.Priority.APPLICATION)

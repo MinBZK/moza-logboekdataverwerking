@@ -82,10 +82,9 @@ class RefusingLogboekDriver : Driver {
         })
 
     /** Zero value for a primitive return type, null otherwise, so setters and closers just pass. */
-    private fun default(method: Method): Any? = when (method.returnType) {
-        java.lang.Boolean.TYPE -> false
-        java.lang.Integer.TYPE -> 0
-        java.lang.Long.TYPE -> 0L
-        else -> null
+    private fun default(method: Method): Any? {
+        val type = method.returnType
+        if (!type.isPrimitive || type == Void.TYPE) return null
+        return java.lang.reflect.Array.get(java.lang.reflect.Array.newInstance(type, 1), 0)
     }
 }
