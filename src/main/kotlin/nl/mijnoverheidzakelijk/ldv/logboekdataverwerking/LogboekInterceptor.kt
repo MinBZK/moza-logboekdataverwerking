@@ -7,6 +7,7 @@ import io.opentelemetry.context.propagation.TextMapGetter
 import nl.mijnoverheidzakelijk.ldv.config.ConfigurationLoader
 import nl.mijnoverheidzakelijk.ldv.exporter.LogboekWriteFailureRecorder
 
+import jakarta.annotation.Priority
 import jakarta.inject.Inject
 import jakarta.interceptor.AroundInvoke
 import jakarta.interceptor.Interceptor
@@ -23,8 +24,14 @@ import java.util.logging.Logger
  * It extracts an existing trace context from inbound HTTP headers
  * (if present) using the W3C Trace Context format and enriches the span with Logboek
  * attributes before ending it.
+ *
+ * Priority [Interceptor.Priority.APPLICATION] runs the interceptor inside the
+ * Quarkus `@Transactional` (`PLATFORM_BEFORE + 200`), security (`+ 150`) and
+ * cache (`+ 2`) interceptors, so a fail-closed write failure throws before the
+ * commit. Consequences and limits: README, "Interceptorvolgorde en transacties".
  */
 @Logboek
+@Priority(Interceptor.Priority.APPLICATION)
 @Interceptor
 class LogboekInterceptor {
 
