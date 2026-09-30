@@ -347,6 +347,7 @@ internal class LogboekInterceptorTest {
             }
             every { mockHandler.addLogboekContextToSpan(any(), any<LogboekContext>(), any()) } answers {
                 mockLogboekContext.clearExpectedException()
+                emptyList()
             }
 
             // when / then
@@ -367,6 +368,7 @@ internal class LogboekInterceptorTest {
             every { mockInvocationContext.proceed() } throws kaboom
             every { mockHandler.addLogboekContextToSpan(any(), any<LogboekContext>(), any()) } answers {
                 mockLogboekContext.expectException(kaboom)
+                emptyList()
             }
 
             // when / then
