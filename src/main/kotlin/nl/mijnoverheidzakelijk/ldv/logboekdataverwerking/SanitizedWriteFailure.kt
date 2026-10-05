@@ -19,10 +19,10 @@ import java.sql.SQLException
  *   `nextException` chain in [nextSqlStates];
  * - the [vendorCode] and [queryId] a [SpanStorageException] took from the database;
  * - the message, as [detail], of a [SpanStorageException] (a fixed text of this
- *   library) and of the JVM errors `VirtualMachineError`, `NoClassDefFoundError` and
- *   `UnsupportedClassVersionError`. Not of every `LinkageError`: an
- *   `ExceptionInInitializerError` or `BootstrapMethodError` quotes the message of the
- *   exception behind it;
+ *   library) and of the JVM errors `OutOfMemoryError`, `NoClassDefFoundError` and
+ *   `UnsupportedClassVersionError`. Not of JVM errors in general: an `InternalError`,
+ *   `ExceptionInInitializerError` or `BootstrapMethodError` can quote the message of
+ *   the exception behind it;
  * - the types of its suppressed exceptions in [suppressedTypes].
  *
  * Every other message is dropped, and so are the original exceptions themselves. Of
@@ -147,7 +147,7 @@ class SanitizedWriteFailure private constructor(
         /** The message, for the types whose message cannot hold logregel content. */
         private fun safeDetail(t: Throwable): String? = when (t) {
             is SpanStorageException,
-            is VirtualMachineError,
+            is OutOfMemoryError,
             is NoClassDefFoundError,
             is UnsupportedClassVersionError,
             -> t.message

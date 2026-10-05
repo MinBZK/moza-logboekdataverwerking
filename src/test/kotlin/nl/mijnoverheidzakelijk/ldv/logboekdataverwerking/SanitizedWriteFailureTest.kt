@@ -110,9 +110,13 @@ internal class SanitizedWriteFailureTest {
     fun `Drops the message of a JVM error that quotes the exception behind it`() {
         val initializer = ExceptionInInitializerError("Exception java.lang.IllegalStateException: $BSN")
         val bootstrap = BootstrapMethodError(IllegalStateException(BSN))
+        val internal = InternalError(IllegalStateException(BSN))
 
         assert(SanitizedWriteFailure.of(initializer).detail == null)
         assert(!SanitizedWriteFailure.of(bootstrap).stackTraceToString().contains(BSN))
+        assert(!SanitizedWriteFailure.of(internal).stackTraceToString().contains(BSN)) {
+            "an InternalError built from a cause takes over that cause's message"
+        }
     }
 
     @Test

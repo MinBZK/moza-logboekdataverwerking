@@ -239,7 +239,7 @@ Een schrijffout komt zonder de inhoud van de logregel in de applicatielog en bij
 - het exceptietype en de stackframes;
 - bij PostgreSQL de SQLState;
 - bij ClickHouse de foutcode van de server en het query-id, waarmee de volledige fout in `system.query_log` is terug te vinden;
-- de vaste foutmelding van de wrapper zelf (bijvoorbeeld `Failed to insert into PostgreSQL`) en de melding van een JVM-fout zoals `OutOfMemoryError` of `NoClassDefFoundError`.
+- de vaste foutmelding van de wrapper zelf (bijvoorbeeld `Failed to insert into PostgreSQL`) en de melding van de JVM-fouten `OutOfMemoryError`, `NoClassDefFoundError` en `UnsupportedClassVersionError`.
 
 Alle andere foutmeldingen vallen weg en zijn nergens meer beschikbaar; diagnose loopt via het bovenstaande, samen met het aantal verloren logregels en hun `trace_id:span_id` in de SEVERE-regel.
 
