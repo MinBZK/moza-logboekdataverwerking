@@ -15,7 +15,12 @@ import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.TestInstance
+import org.junit.jupiter.api.assertThrows
 import java.util.Optional
+import java.util.logging.Handler
+import java.util.logging.Level
+import java.util.logging.LogRecord
+import java.util.logging.Logger
 
 /**
  * Runs the write-first pattern against a real PostgreSQL (Zonky embedded, a child
@@ -159,6 +164,49 @@ internal class RecordFailedOutcomePostgresTest {
         assert(lost == logregels) { "the caller must learn that the Logboek now under-reports, got $lost" }
         assert(LogboekWriteFailureRecorder.consume() == null) { "the outcome write failure must not linger for a later action" }
         assert(rows().size == 1)
+    }
+
+    @Test
+    fun `A rejected insert keeps the betrokkene out of the application log and the thrown exception`() {
+        val bsn = "999993653"
+        sql(
+            "CREATE FUNCTION weiger() RETURNS trigger AS \$\$ BEGIN RAISE EXCEPTION 'geweigerd'; END \$\$ LANGUAGE plpgsql",
+        )
+        sql("CREATE TRIGGER weiger BEFORE INSERT ON $TABLE FOR EACH ROW EXECUTE FUNCTION weiger()")
+        val records = mutableListOf<LogRecord>()
+        val capture = object : Handler() {
+            override fun publish(record: LogRecord) { records.add(record) }
+            override fun flush() {}
+            override fun close() {}
+        }
+        val logger = Logger.getLogger("nl.mijnoverheidzakelijk.ldv")
+        logger.addHandler(capture)
+        val thrown = try {
+            val span = handler.startSpan("aanleveren", null)
+            handler.addLogboekContextToSpan(
+                span,
+                LogboekContext().apply {
+                    processingActivityId = ACTIVITY
+                    dataSubjectId = bsn
+                    dataSubjectType = "BSN"
+                },
+            )
+            span.end()
+            assertThrows<LogboekWriteException> { handler.enforceWriteAcknowledgement() }
+        } finally {
+            logger.removeHandler(capture)
+            sql("DROP TRIGGER weiger ON $TABLE")
+            sql("DROP FUNCTION weiger()")
+        }
+
+        val severe = records.filter { it.level == Level.SEVERE }
+        assert(severe.isNotEmpty()) { "the rejected write must stay visible" }
+        val logged = severe.joinToString("\n") { it.message + it.thrown?.stackTraceToString().orEmpty() }
+        assert(!logged.contains(bsn)) { "the betrokkene must stay out of the application log:\n$logged" }
+        assert(logged.contains("java.sql.BatchUpdateException")) { logged }
+        assert(logged.contains("SQLState")) { logged }
+        val propagated = thrown.stackTraceToString()
+        assert(!propagated.contains(bsn)) { "the betrokkene must not travel with the exception:\n$propagated" }
     }
 
     private fun singleSubjectContext() = LogboekContext().apply {

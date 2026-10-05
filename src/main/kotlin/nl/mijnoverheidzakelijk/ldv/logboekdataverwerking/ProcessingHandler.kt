@@ -22,6 +22,7 @@ import nl.mijnoverheidzakelijk.ldv.config.ConfigurationLoader
 import nl.mijnoverheidzakelijk.ldv.exporter.LdvSpanExporter
 import nl.mijnoverheidzakelijk.ldv.exporter.LdvSpanFilterProcessor
 import nl.mijnoverheidzakelijk.ldv.exporter.LogboekWriteFailureRecorder
+import nl.mijnoverheidzakelijk.ldv.exporter.SanitizedWriteFailure
 import nl.mijnoverheidzakelijk.ldv.repository.ClickHouseRepository
 import nl.mijnoverheidzakelijk.ldv.repository.PostgresRepository
 import nl.mijnoverheidzakelijk.ldv.repository.SpanRepository
@@ -316,7 +317,8 @@ class ProcessingHandler {
         ) { "${it.spanContext.traceId}:${it.spanContext.spanId}" }
         val message = "Failed to record the outcome of ${lost.size} logregel(s); " +
             "they stay without ERROR logregel in the Logboek [$ids]"
-        if (cause == null) LOGGER.severe(message) else LOGGER.log(Level.SEVERE, message, cause)
+        // Sanitized: the cause can echo the content of the logregel it failed to write.
+        if (cause == null) LOGGER.severe(message) else LOGGER.log(Level.SEVERE, message, SanitizedWriteFailure.of(cause))
     }
 
     /**

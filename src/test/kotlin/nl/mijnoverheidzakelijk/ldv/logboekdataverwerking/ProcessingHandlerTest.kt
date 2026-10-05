@@ -694,6 +694,20 @@ internal class ProcessingHandlerTest {
         }
 
         @Test
+        fun `A lost outcome is logged without the message of the write failure`() {
+            every { mockSpan.end() } throws RuntimeException("INSERT ... \"dpl.core.data_subject_id\":\"999993653\" was aborted")
+
+            val records = captureProcessingHandlerLogs {
+                handler.recordFailedOutcome(Logregel(original, "aanleveren", null, null), IllegalStateException("x"))
+            }
+
+            val severe = records.single { it.level == Level.SEVERE }
+            val rendered = severe.message + severe.thrown.stackTraceToString()
+            assert(!rendered.contains("999993653")) { "the betrokkene must stay out of the application log: $rendered" }
+            assert(rendered.contains("java.lang.RuntimeException")) { rendered }
+        }
+
+        @Test
         fun `A JVM Error from the write is reported as lost, not thrown`() {
             every { mockSpan.end() } throws OutOfMemoryError("exporter ran out of heap")
             val logregel = Logregel(original, "aanleveren", null, null)
@@ -704,7 +718,9 @@ internal class ProcessingHandlerTest {
             }
 
             val severe = records.single { it.level == Level.SEVERE }
-            assert(severe.thrown is OutOfMemoryError) { "the Error is the reported cause, got ${severe.thrown}" }
+            assert(severe.thrown.message!!.contains("java.lang.OutOfMemoryError")) {
+                "the Error is the reported cause, got ${severe.thrown}"
+            }
             assert(lost == listOf(logregel)) { "the caller must be able to see the under-reporting, got $lost" }
             assert(LogboekWriteFailureRecorder.consume() == null) { "nothing may linger on the thread" }
         }

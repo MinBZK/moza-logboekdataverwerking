@@ -65,15 +65,17 @@ class LdvSpanExporter(
         if (mappingFailure != null) {
             // A mapping failure is a code defect, not a transient DB issue, so flag
             // the cause distinctly from an insert failure and list the lost records.
+            // Sanitized: the exception message can echo the content of the logregel.
+            val failure = SanitizedWriteFailure.of(mappingFailure)
             LOGGER.log(
                 Level.SEVERE,
                 "Failed to map ${unmappableSpans.size} of ${spans.size} span(s) for export; " +
                     "lost spans: ${lostSpanIds(unmappableSpans)}",
-                mappingFailure,
+                failure,
             )
             // Relay to the request thread so a fail-closed verwerking can surface it.
             if (relayWriteFailures) {
-                LogboekWriteFailureRecorder.record(mappingFailure)
+                LogboekWriteFailureRecorder.record(failure)
             }
         }
 
@@ -92,14 +94,16 @@ class LdvSpanExporter(
         } catch (e: Exception) {
             // The insert is all-or-nothing (no retry), so log the count and the
             // trace/span ids of the lost LDV records to keep them traceable.
+            // Sanitized: a driver echoes the rejected statement, betrokkene included.
+            val failure = SanitizedWriteFailure.of(e)
             LOGGER.log(
                 Level.SEVERE,
                 "Failed to export ${mappedSpans.size} span(s); lost spans: ${lostSpanIds(mappedSpans)}",
-                e,
+                failure,
             )
             // Relay to the request thread so a fail-closed verwerking can surface it.
             if (relayWriteFailures) {
-                LogboekWriteFailureRecorder.record(e)
+                LogboekWriteFailureRecorder.record(failure)
             }
             CompletableResultCode.ofFailure()
         }
