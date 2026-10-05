@@ -17,7 +17,7 @@ Dit Open Source project is opgezet om de LDV standaard eenvoudig aan nieuwe of b
 
 ## Afhankelijkheden
 
-- **Quarkus** - De library is gebouwd op CDI-interceptors (`@Logboek`), JAX-RS (`HttpHeaders`, client filter) en MicroProfile Config. Quarkus levert deze API's; in de library zijn ze als `provided` gedeclareerd. Andere runtimes, zoals Spring Boot, worden niet ondersteund.
+- **Quarkus** - De library is gebouwd op CDI-interceptors (`@Logboek`), JAX-RS (`HttpHeaders`, client filter) en MicroProfile Config. Quarkus levert deze API's; in de library zijn ze als `provided` gedeclareerd. Andere runtimes, zoals Spring Boot, worden niet ondersteund. De library wordt getest tegen één Quarkus-versie (`quarkus.platform.version` in de `pom.xml`): de dependency-versies uit die `quarkus-bom` zijn de versies waarmee ze gegarandeerd werkt.
 - **Clickhouse of PostgreSQL database** - Voor het opslaan van de logging wordt standaard ClickHouse gebruikt: https://clickhouse.com/. ClickHouse is geoptimaliseerd voor zeer grote volumes. Organisaties die liever PostgreSQL beheren, kunnen dat als backend kiezen via `logboekdataverwerking.dbms=postgresql` (zie hieronder).
 - **Verwerkingsactiviteiten register** - Bij het loggen van de activiteit wordt verwezen naar een ID van een verwerkingsactiviteit in een activiteiten register. Meer informatie hierover is te vinden in de documentatie van de standaard. Hierbij wordt geen richtlijn opgegeven voor de technische implementatie en deze is daarom niet inbegrepen bij deze implementatie.
 
