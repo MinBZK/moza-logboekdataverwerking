@@ -237,13 +237,13 @@ Kies je tóch `batch`, doe dat dan als bewuste, gedocumenteerde afweging. De sit
 Een schrijffout komt zonder de inhoud van de logregel in de applicatielog en bij de aanroeper. Een databasedriver kan het geweigerde statement in zijn foutmelding herhalen, inclusief de betrokkene (de PostgreSQL-driver doet dat). De wrapper logt daarom een `SanitizedWriteFailure` in plaats van de oorspronkelijke exceptie. Per exceptie uit de keten blijft over:
 
 - het exceptietype en de stackframes;
-- bij PostgreSQL de SQLState en de foutcode van de driver;
+- bij PostgreSQL de SQLState;
 - bij ClickHouse de foutcode van de server en het query-id, waarmee de volledige fout in `system.query_log` is terug te vinden;
-- de vaste foutmelding van de wrapper zelf (bijvoorbeeld `Failed to insert into PostgreSQL`) en de melding van een JVM-fout zoals `OutOfMemoryError`.
+- de vaste foutmelding van de wrapper zelf (bijvoorbeeld `Failed to insert into PostgreSQL`) en de melding van een JVM-fout zoals `OutOfMemoryError` of `NoClassDefFoundError`.
 
 Alle andere foutmeldingen vallen weg en zijn nergens meer beschikbaar; diagnose loopt via het bovenstaande, samen met het aantal verloren logregels en hun `trace_id:span_id` in de SEVERE-regel.
 
-De cause van een `LogboekWriteException` is dezelfde `SanitizedWriteFailure`, ook beschikbaar als `failure`. Lees daar `sqlState`, `vendorCode` en `queryId` uit, of loop met `chain` de hele keten af, bijvoorbeeld om een verbroken verbinding (SQLState-klasse `08`) anders af te handelen dan een geweigerde rij. Een controle als `cause.cause is SQLException` werkt niet meer.
+De cause van een `LogboekWriteException` is dezelfde `SanitizedWriteFailure`, ook beschikbaar als `failure`. De buitenste schakel is de exceptie van de wrapper zelf: daar staan bij ClickHouse `vendorCode` en `queryId`. De SQLState van PostgreSQL zit dieper in de keten; zoek die met `failure.chain.firstNotNullOfOrNull { it.sqlState }`, bijvoorbeeld om een verbroken verbinding (SQLState-klasse `08`) anders af te handelen dan een geweigerde rij. Een controle als `cause.cause is SQLException` werkt niet meer.
 
 De wrapper heeft geen invloed op wat de databasedriver zelf logt, via de loggers `org.postgresql` en `com.clickhouse`. Ga na wat die op het ingestelde logniveau schrijven voordat je ze fijner afstelt: een driver kan dan statements, rijen of zijn eigen excepties loggen.
 

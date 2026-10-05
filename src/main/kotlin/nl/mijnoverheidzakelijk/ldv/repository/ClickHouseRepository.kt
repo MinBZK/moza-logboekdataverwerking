@@ -130,10 +130,11 @@ class ClickHouseRepository(
      */
     private fun storageFailure(message: String, e: Exception): SpanStorageException {
         val chain = generateSequence<Throwable>(e) { it.cause }.take(CAUSE_SEARCH_DEPTH).toList()
-        return SpanStorageException(
+        return SpanStorageException.create(
             message,
             e,
-            vendorCode = chain.firstNotNullOfOrNull { it as? ServerException }?.code,
+            // CODE_UNKNOWN (0) is what the client reports for a non-ClickHouse error, e.g. a proxy 502.
+            vendorCode = chain.firstNotNullOfOrNull { it as? ServerException }?.code?.takeIf { it != 0 },
             queryId = chain.firstNotNullOfOrNull { (it as? ClickHouseException)?.queryId },
         )
     }
@@ -143,7 +144,8 @@ class ClickHouseRepository(
     }
 
     private companion object {
-        // How deep to look for the ClickHouse exception under e.g. an ExecutionException.
+        // How deep to look for the ClickHouse exception: the client throws it directly, or
+        // under an ExecutionException when it runs its operations asynchronously.
         const val CAUSE_SEARCH_DEPTH = 10
     }
 }

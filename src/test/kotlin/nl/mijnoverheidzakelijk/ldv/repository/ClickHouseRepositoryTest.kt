@@ -257,6 +257,31 @@ internal class ClickHouseRepositoryTest {
         }
 
         @Test
+        fun `Lifts the server error code out of an insert the client rejects synchronously`() {
+            // The default: without async operations the client throws from insert() itself.
+            every { mockClient.insert(any<String>(), any<InputStream>(), any<ClickHouseFormat>()) } throws
+                ServerException(241, "Memory limit exceeded", 500, "q-1")
+
+            val exception = assertThrows<SpanStorageException> {
+                repository.insertJsonEachRow("""{"traceId":"123"}""")
+            }
+
+            assert(exception.vendorCode == 241 && exception.queryId == "q-1")
+        }
+
+        @Test
+        fun `Reports no error code when the failure did not come from ClickHouse`() {
+            every { mockClient.insert(any<String>(), any<InputStream>(), any<ClickHouseFormat>()) } throws
+                ServerException(ServerException.CODE_UNKNOWN, "502 Bad Gateway", 502, "q-1")
+
+            val exception = assertThrows<SpanStorageException> {
+                repository.insertJsonEachRow("""{"traceId":"123"}""")
+            }
+
+            assert(exception.vendorCode == null) { "got ${exception.vendorCode}" }
+        }
+
+        @Test
         fun `Converts payload to UTF-8 bytes`() {
             // given
             val jsonPayload = """{"name":"tëst-üñíçödé"}"""

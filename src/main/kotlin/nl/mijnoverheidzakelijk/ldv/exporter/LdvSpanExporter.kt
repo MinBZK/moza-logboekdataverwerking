@@ -139,7 +139,7 @@ class LdvSpanExporter(
         repository.close()
         CompletableResultCode.ofSuccess()
     } catch (e: Exception) {
-        LOGGER.log(Level.SEVERE, "Failed to close span repository", e)
+        LOGGER.log(Level.SEVERE, "Failed to close span repository", SanitizedWriteFailure.of(e))
         CompletableResultCode.ofFailure()
     }
 

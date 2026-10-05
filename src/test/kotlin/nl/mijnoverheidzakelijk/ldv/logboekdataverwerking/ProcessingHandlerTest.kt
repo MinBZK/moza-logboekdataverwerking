@@ -17,6 +17,7 @@ import io.opentelemetry.context.Context
 import nl.mijnoverheidzakelijk.ldv.config.ConfigurationLoader
 import nl.mijnoverheidzakelijk.ldv.exporter.LdvSpanFilterProcessor
 import nl.mijnoverheidzakelijk.ldv.exporter.LogboekWriteFailureRecorder
+import nl.mijnoverheidzakelijk.ldv.repository.SpanStorageException
 import java.sql.SQLException
 import java.util.Optional
 import java.util.logging.Handler
@@ -809,14 +810,17 @@ internal class ProcessingHandlerTest {
             every {
                 mockConfig.getOptionalValue("logboekdataverwerking.write-failure-policy", String::class.java)
             } returns Optional.of("fail-closed")
-            val recorded = SanitizedWriteFailure.of(SQLException("connection lost", "08006"))
+            // The shape a repository produces: its own exception around the driver's.
+            val recorded = SanitizedWriteFailure.of(
+                SpanStorageException.create("Failed to insert into PostgreSQL", SQLException("connection lost", "08006")),
+            )
             LogboekWriteFailureRecorder.record(recorded)
 
             val thrown = assertThrows<LogboekWriteException> { handler.enforceWriteAcknowledgement() }
 
             assert(thrown.failure === recorded) { "the caller gets the typed failure, got ${thrown.failure}" }
             assert(thrown.cause === recorded)
-            assert(thrown.failure?.sqlState == "08006")
+            assert(thrown.failure?.chain?.firstNotNullOfOrNull { it.sqlState } == "08006")
         }
 
         @Test

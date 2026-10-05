@@ -81,7 +81,7 @@ internal class SanitizedWriteFailureTest {
     @Test
     fun `Keeps the fixed message, error code and query id of a storage exception`() {
         val failure = SanitizedWriteFailure.of(
-            SpanStorageException("Failed to insert into ClickHouse", IllegalStateException(BSN), 60, "abc-123"),
+            SpanStorageException.create("Failed to insert into ClickHouse", IllegalStateException(BSN), 60, "abc-123"),
         )
 
         assert(
@@ -94,7 +94,7 @@ internal class SanitizedWriteFailureTest {
 
     @Test
     fun `A malformed query id is dropped`() {
-        val failure = SanitizedWriteFailure.of(SpanStorageException("Failed to insert into ClickHouse", null, 60, "id $BSN"))
+        val failure = SanitizedWriteFailure.of(SpanStorageException.create("Failed to insert into ClickHouse", null, 60, "id $BSN"))
 
         assert(failure.queryId == null)
         assert(!failure.stackTraceToString().contains(BSN))
@@ -104,6 +104,15 @@ internal class SanitizedWriteFailureTest {
     fun `Keeps the message of a JVM error`() {
         assert(SanitizedWriteFailure.of(OutOfMemoryError("Java heap space")).detail == "Java heap space")
         assert(SanitizedWriteFailure.of(NoClassDefFoundError("org/postgresql/Driver")).detail == "org/postgresql/Driver")
+    }
+
+    @Test
+    fun `Drops the message of a JVM error that quotes the exception behind it`() {
+        val initializer = ExceptionInInitializerError("Exception java.lang.IllegalStateException: $BSN")
+        val bootstrap = BootstrapMethodError(IllegalStateException(BSN))
+
+        assert(SanitizedWriteFailure.of(initializer).detail == null)
+        assert(!SanitizedWriteFailure.of(bootstrap).stackTraceToString().contains(BSN))
     }
 
     @Test

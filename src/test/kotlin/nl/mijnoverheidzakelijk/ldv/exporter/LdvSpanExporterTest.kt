@@ -155,7 +155,7 @@ internal class LdvSpanExporterTest {
 
     @Test
     fun `ClickHouse insert failure is logged with the server error code and query id`() {
-        every { mockRepository.insert(any()) } throws SpanStorageException(
+        every { mockRepository.insert(any()) } throws SpanStorageException.create(
             "Failed to insert into ClickHouse",
             IllegalStateException("Code: 60. Table x does not exist, while inserting $BSN"),
             vendorCode = 60,
@@ -341,7 +341,7 @@ internal class LdvSpanExporterTest {
     }
 
     /** The shape PostgreSQL gives a rejected batch: the message echoes the full INSERT. */
-    private fun rejectedInsert(): RuntimeException = SpanStorageException(
+    private fun rejectedInsert(): RuntimeException = SpanStorageException.create(
         "Failed to insert into PostgreSQL",
         BatchUpdateException(
             "Batch entry 0 INSERT INTO logboek_dataverwerkingen (attributes) " +

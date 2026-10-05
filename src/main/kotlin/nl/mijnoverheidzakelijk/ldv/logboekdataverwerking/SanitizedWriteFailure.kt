@@ -19,12 +19,15 @@ import java.sql.SQLException
  *   `nextException` chain in [nextSqlStates];
  * - the [vendorCode] and [queryId] a [SpanStorageException] took from the database;
  * - the message, as [detail], of a [SpanStorageException] (a fixed text of this
- *   library) and of a JVM `VirtualMachineError` or `LinkageError`;
+ *   library) and of the JVM errors `VirtualMachineError`, `NoClassDefFoundError` and
+ *   `UnsupportedClassVersionError`. Not of every `LinkageError`: an
+ *   `ExceptionInInitializerError` or `BootstrapMethodError` quotes the message of the
+ *   exception behind it;
  * - the types of its suppressed exceptions in [suppressedTypes].
  *
- * Every other message is dropped, and so are the original exceptions themselves. A
- * chain longer than [MAX_CHAIN_DEPTH] keeps its outermost links and its root cause;
- * [omittedCauses] on the link before the root tells how many were left out.
+ * Every other message is dropped, and so are the original exceptions themselves. Of
+ * a chain longer than [MAX_CHAIN_DEPTH] the outermost links and the last one are kept;
+ * [omittedCauses] on the link before that last one tells how many were left out.
  *
  * @property type class name of the exception this link stands for
  * @property detail the exception's message, only for the types listed above
@@ -35,7 +38,8 @@ import java.sql.SQLException
  * @property nextSqlStates SQLStates of the `nextException` chain that are not part
  *   of the cause chain
  * @property suppressedTypes class names of the suppressed exceptions
- * @property omittedCauses number of links left out between this one and its [cause]
+ * @property omittedCauses number of links left out between this one and its [cause];
+ *   a lower bound for a chain too long to walk to its end
  */
 class SanitizedWriteFailure private constructor(
     val type: String,
@@ -65,7 +69,10 @@ class SanitizedWriteFailure private constructor(
     override fun fillInStackTrace(): Throwable = this
 
     companion object {
-        /** Upper bound on the links kept from one cause chain. */
+        /**
+         * Upper bound on the links taken from one chain of unsanitized exceptions. A chain
+         * that continues in an already sanitized failure is longer by that failure's own.
+         */
         const val MAX_CHAIN_DEPTH = 10
 
         // Bounds the walk itself, for a chain that never ends without repeating a link.
@@ -139,7 +146,11 @@ class SanitizedWriteFailure private constructor(
 
         /** The message, for the types whose message cannot hold logregel content. */
         private fun safeDetail(t: Throwable): String? = when (t) {
-            is SpanStorageException, is VirtualMachineError, is LinkageError -> t.message
+            is SpanStorageException,
+            is VirtualMachineError,
+            is NoClassDefFoundError,
+            is UnsupportedClassVersionError,
+            -> t.message
             else -> null
         }
 
