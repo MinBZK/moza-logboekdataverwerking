@@ -28,17 +28,26 @@ import java.util.logging.Logger
  */
 @ApplicationScoped
 class RefusingLogboekDriverRegistration {
+
+    /**
+     * Read by the driver on every insert. The tests flip it per case: `true` is the
+     * "Logboek weigert de schrijfactie" case, `false` the happy flow.
+     */
+    @Volatile
+    var refuseInserts: Boolean = true
+
     fun register(@Observes event: StartupEvent) {
-        DriverManager.registerDriver(RefusingLogboekDriver())
+        DriverManager.registerDriver(RefusingLogboekDriver { refuseInserts })
     }
 }
 
 /**
  * JDBC driver for the Quarkus tests: connects, accepts the schema, and refuses every
- * insert with an [SQLException]. That is the "Logboek weigert de schrijfactie" case
- * without a database process.
+ * insert with an [SQLException] while [refuses] says so. That is the "Logboek weigert
+ * de schrijfactie" case without a database process. An accepted insert reports one
+ * row per batched statement, as a real driver would.
  */
-class RefusingLogboekDriver : Driver {
+class RefusingLogboekDriver(private val refuses: () -> Boolean = { true }) : Driver {
 
     companion object {
         const val URL_PREFIX: String = "jdbc:logboek-weigert:"
@@ -53,8 +62,15 @@ class RefusingLogboekDriver : Driver {
             when (method.name) {
                 "isValid" -> true
                 "createStatement" -> stub(Statement::class.java) { m, _ -> if (m.name == "execute") true else default(m) }
-                "prepareStatement" -> stub(PreparedStatement::class.java) { m, _ ->
-                    if (m.name == "executeBatch") throw SQLException(REFUSAL) else default(m)
+                "prepareStatement" -> {
+                    var batched = 0
+                    stub(PreparedStatement::class.java) { m, _ ->
+                        when (m.name) {
+                            "addBatch" -> { batched++; null }
+                            "executeBatch" -> if (refuses()) throw SQLException(REFUSAL) else IntArray(batched) { 1 }
+                            else -> default(m)
+                        }
+                    }
                 }
                 else -> default(method)
             }

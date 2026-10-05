@@ -15,6 +15,7 @@ import io.opentelemetry.sdk.trace.ReadWriteSpan
 import io.opentelemetry.sdk.trace.ReadableSpan
 import io.opentelemetry.sdk.trace.SdkTracerProvider
 import io.opentelemetry.sdk.trace.SpanProcessor
+import io.quarkus.cache.CacheResult
 import jakarta.interceptor.InvocationContext
 import jakarta.ws.rs.core.HttpHeaders
 import jakarta.ws.rs.core.MultivaluedHashMap
@@ -23,6 +24,8 @@ import nl.mijnoverheidzakelijk.ldv.exporter.LogboekWriteFailureRecorder
 import org.eclipse.microprofile.config.Config
 import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.AfterEach
+import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.DisplayName
@@ -33,6 +36,10 @@ import org.junit.jupiter.api.assertThrows
 import java.lang.reflect.Field
 import java.lang.reflect.Method
 import java.util.Optional
+import java.util.logging.Handler
+import java.util.logging.Level
+import java.util.logging.LogRecord
+import java.util.logging.Logger
 
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 internal class LogboekInterceptorTest {
@@ -117,6 +124,10 @@ internal class LogboekInterceptorTest {
 
         @Logboek(processingActivityId = "https://register.example.org/activiteiten/activity-123")
         fun emptyNameMethod() {}
+
+        @Logboek(name = "cached", processingActivityId = "https://register.example.org/activiteiten/activity-123")
+        @CacheResult(cacheName = "test")
+        fun cachedMethod() {}
     }
 
     private fun getAnnotatedMethod(): Method {
@@ -125,6 +136,27 @@ internal class LogboekInterceptorTest {
 
     private fun getEmptyNameMethod(): Method {
         return AnnotatedMethods::class.java.getDeclaredMethod("emptyNameMethod")
+    }
+
+    private fun getCachedMethod(): Method {
+        return AnnotatedMethods::class.java.getDeclaredMethod("cachedMethod")
+    }
+
+    private fun captureInterceptorLogs(block: () -> Unit): List<LogRecord> {
+        val records = mutableListOf<LogRecord>()
+        val capture = object : Handler() {
+            override fun publish(record: LogRecord) { records.add(record) }
+            override fun flush() {}
+            override fun close() {}
+        }
+        val logger = Logger.getLogger(LogboekInterceptor::class.java.name)
+        logger.addHandler(capture)
+        try {
+            block()
+        } finally {
+            logger.removeHandler(capture)
+        }
+        return records
     }
 
     @Nested
@@ -163,6 +195,32 @@ internal class LogboekInterceptorTest {
 
             // then: LDV 3.3.2.1, an empty name is auto-filled, never a runtime error
             verify { mockHandler.startSpan("emptyNameMethod", any()) }
+        }
+
+        @Test
+        fun `A method that also carries CacheResult is warned about once`() {
+            every { mockInvocationContext.method } returns getCachedMethod()
+            every { mockInvocationContext.proceed() } returns "result"
+
+            val records = captureInterceptorLogs {
+                interceptor.log(mockInvocationContext)
+                interceptor.log(mockInvocationContext)
+            }
+
+            val warnings = records.filter { it.level == Level.WARNING && "@CacheResult" in it.message }
+            assertEquals(1, warnings.size, "one warning per method, not per call: $records")
+            assertTrue("cachedMethod" in warnings.single().message)
+            verify(exactly = 2) { mockHandler.startSpan("cached", any()) }
+        }
+
+        @Test
+        fun `A method without CacheResult is not warned about`() {
+            every { mockInvocationContext.method } returns getAnnotatedMethod()
+            every { mockInvocationContext.proceed() } returns "result"
+
+            val records = captureInterceptorLogs { interceptor.log(mockInvocationContext) }
+
+            assertTrue(records.none { "@CacheResult" in it.message }, "$records")
         }
 
         @Test
