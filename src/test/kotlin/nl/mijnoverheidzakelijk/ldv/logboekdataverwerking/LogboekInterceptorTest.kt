@@ -567,7 +567,7 @@ internal class LogboekInterceptorTest {
             every { innerCall.proceed() } answers {
                 // Simulates the exporter recording a failed logregel write for the
                 // nested action on this thread.
-                LogboekWriteFailureRecorder.record(RuntimeException("clickhouse down"))
+                LogboekWriteFailureRecorder.record(SanitizedWriteFailure.of(RuntimeException("clickhouse down")))
                 "inner"
             }
             var innerResult: Any? = null
@@ -605,7 +605,7 @@ internal class LogboekInterceptorTest {
             every { failingSibling.method } returns getAnnotatedMethod()
             every { succeedingSibling.method } returns getAnnotatedMethod()
             every { failingSibling.proceed() } answers {
-                LogboekWriteFailureRecorder.record(RuntimeException("clickhouse down"))
+                LogboekWriteFailureRecorder.record(SanitizedWriteFailure.of(RuntimeException("clickhouse down")))
                 "first"
             }
             every { succeedingSibling.proceed() } returns "second"
@@ -635,7 +635,7 @@ internal class LogboekInterceptorTest {
             every { outerCall.method } returns getAnnotatedMethod()
             every { innerCall.method } returns getAnnotatedMethod()
             every { innerCall.proceed() } answers {
-                LogboekWriteFailureRecorder.record(RuntimeException("clickhouse down"))
+                LogboekWriteFailureRecorder.record(SanitizedWriteFailure.of(RuntimeException("clickhouse down")))
                 "inner"
             }
             var onWorkerThread: Throwable? = null

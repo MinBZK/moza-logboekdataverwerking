@@ -5,10 +5,13 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import io.mockk.clearAllMocks
 import io.mockk.every
 import io.mockk.mockk
+import io.opentelemetry.api.trace.StatusCode
 import io.opentelemetry.sdk.OpenTelemetrySdk
 import io.zonky.test.db.postgres.embedded.EmbeddedPostgres
 import nl.mijnoverheidzakelijk.ldv.config.ConfigurationLoader
 import nl.mijnoverheidzakelijk.ldv.exporter.LogboekWriteFailureRecorder
+import nl.mijnoverheidzakelijk.ldv.exporter.SpanRow
+import nl.mijnoverheidzakelijk.ldv.repository.PostgresRepository
 import org.eclipse.microprofile.config.Config
 import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.BeforeAll
@@ -169,19 +172,35 @@ internal class RecordFailedOutcomePostgresTest {
     @Test
     fun `A rejected insert keeps the betrokkene out of the application log and the thrown exception`() {
         val bsn = "999993653"
-        sql(
-            "CREATE FUNCTION weiger() RETURNS trigger AS \$\$ BEGIN RAISE EXCEPTION 'geweigerd'; END \$\$ LANGUAGE plpgsql",
-        )
-        sql("CREATE TRIGGER weiger BEFORE INSERT ON $TABLE FOR EACH ROW EXECUTE FUNCTION weiger()")
         val records = mutableListOf<LogRecord>()
         val capture = object : Handler() {
             override fun publish(record: LogRecord) { records.add(record) }
             override fun flush() {}
             override fun close() {}
         }
-        val logger = Logger.getLogger("nl.mijnoverheidzakelijk.ldv")
+        // The root logger: the application log is everything, the OpenTelemetry SDK included.
+        val logger = Logger.getLogger("")
+        sql(
+            "CREATE FUNCTION weiger() RETURNS trigger AS \$\$ BEGIN RAISE EXCEPTION 'geweigerd'; END \$\$ LANGUAGE plpgsql",
+        )
+        sql("CREATE TRIGGER weiger BEFORE INSERT ON $TABLE FOR EACH ROW EXECUTE FUNCTION weiger()")
         logger.addHandler(capture)
-        val thrown = try {
+        val thrown: LogboekWriteException
+        val driverFailure: RuntimeException
+        try {
+            // Control: without sanitizing, this driver does echo the betrokkene. If it
+            // ever stops doing so, the assertions below would pass for the wrong reason.
+            val repository = PostgresRepository(
+                table = TABLE,
+                connectionFactory = { postgres.postgresDatabase.connection },
+            )
+            driverFailure = try {
+                assertThrows<RuntimeException> { repository.insert(listOf(rowFor(bsn))) }
+            } finally {
+                repository.close()
+            }
+            records.clear()
+
             val span = handler.startSpan("aanleveren", null)
             handler.addLogboekContextToSpan(
                 span,
@@ -192,22 +211,40 @@ internal class RecordFailedOutcomePostgresTest {
                 },
             )
             span.end()
-            assertThrows<LogboekWriteException> { handler.enforceWriteAcknowledgement() }
+            thrown = assertThrows<LogboekWriteException> { handler.enforceWriteAcknowledgement() }
         } finally {
             logger.removeHandler(capture)
             sql("DROP TRIGGER weiger ON $TABLE")
             sql("DROP FUNCTION weiger()")
         }
 
-        val severe = records.filter { it.level == Level.SEVERE }
-        assert(severe.isNotEmpty()) { "the rejected write must stay visible" }
-        val logged = severe.joinToString("\n") { it.message + it.thrown?.stackTraceToString().orEmpty() }
+        assert(driverFailure.stackTraceToString().contains(bsn)) {
+            "control failed: the driver exception no longer echoes the betrokkene"
+        }
+        assert(records.any { it.level == Level.SEVERE }) { "the rejected write must stay visible" }
+        // Every record at every level, not only the SEVERE one.
+        val logged = records.joinToString("\n") { it.message + it.thrown?.stackTraceToString().orEmpty() }
         assert(!logged.contains(bsn)) { "the betrokkene must stay out of the application log:\n$logged" }
-        assert(logged.contains("java.sql.BatchUpdateException")) { logged }
-        assert(logged.contains("SQLState")) { logged }
+        assert(logged.contains("java.sql.BatchUpdateException [SQLState P0001]")) { logged }
+        assert(logged.contains("Failed to insert into PostgreSQL")) { logged }
         val propagated = thrown.stackTraceToString()
         assert(!propagated.contains(bsn)) { "the betrokkene must not travel with the exception:\n$propagated" }
+        val failure = checkNotNull(thrown.failure) { "the write failure travels with the exception" }
+        assert(thrown.cause === failure) { "the cause is the sanitized failure" }
+        assert(failure.chain.any { it.sqlState == "P0001" }) { "got ${failure.chain}" }
     }
+
+    private fun rowFor(subjectId: String) = SpanRow(
+        traceId = "0af7651916cd43dd8448eb211c80319c",
+        spanId = "b7ad6b7169203331",
+        status = StatusCode.UNSET,
+        name = "aanleveren",
+        startTimeMillis = 1,
+        endTimeMillis = 2,
+        parentSpanId = null,
+        attributes = mapOf("dpl.core.data_subject_id" to subjectId),
+        resource = emptyMap(),
+    )
 
     private fun singleSubjectContext() = LogboekContext().apply {
         processingActivityId = ACTIVITY

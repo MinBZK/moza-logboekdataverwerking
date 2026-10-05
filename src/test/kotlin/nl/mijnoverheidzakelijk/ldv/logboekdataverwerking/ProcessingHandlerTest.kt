@@ -17,6 +17,7 @@ import io.opentelemetry.context.Context
 import nl.mijnoverheidzakelijk.ldv.config.ConfigurationLoader
 import nl.mijnoverheidzakelijk.ldv.exporter.LdvSpanFilterProcessor
 import nl.mijnoverheidzakelijk.ldv.exporter.LogboekWriteFailureRecorder
+import java.sql.SQLException
 import java.util.Optional
 import java.util.logging.Handler
 import java.util.logging.Level
@@ -618,7 +619,7 @@ internal class ProcessingHandlerTest {
 
         @Test
         fun `A write failure of the outcome logregel is logged, not thrown`() {
-            every { mockSpan.end() } answers { LogboekWriteFailureRecorder.record(RuntimeException("postgres down")) }
+            every { mockSpan.end() } answers { LogboekWriteFailureRecorder.record(SanitizedWriteFailure.of(RuntimeException("postgres down"))) }
             val logregel = Logregel(original, "aanleveren", null, null)
             var lost: List<Logregel> = emptyList()
 
@@ -652,7 +653,7 @@ internal class ProcessingHandlerTest {
             val out1 = mockk<Span>(relaxed = true)
             val out2 = mockk<Span>(relaxed = true)
             every { mockSpanBuilder.startSpan() } returnsMany listOf(out1, out2)
-            every { out2.end() } answers { LogboekWriteFailureRecorder.record(RuntimeException("postgres down")) }
+            every { out2.end() } answers { LogboekWriteFailureRecorder.record(SanitizedWriteFailure.of(RuntimeException("postgres down"))) }
 
             val records = captureProcessingHandlerLogs {
                 handler.recordFailedOutcome(
@@ -718,9 +719,12 @@ internal class ProcessingHandlerTest {
             }
 
             val severe = records.single { it.level == Level.SEVERE }
-            assert(severe.thrown.message!!.contains("java.lang.OutOfMemoryError")) {
-                "the Error is the reported cause, got ${severe.thrown}"
+            val reported = severe.thrown as SanitizedWriteFailure
+            assert(reported.type == "java.lang.OutOfMemoryError") {
+                "the Error type is named in the reported failure, got $reported"
             }
+            // A JVM error's message is the JVM's own and tells which resource ran out.
+            assert(reported.detail == "exporter ran out of heap") { "got ${reported.detail}" }
             assert(lost == listOf(logregel)) { "the caller must be able to see the under-reporting, got $lost" }
             assert(LogboekWriteFailureRecorder.consume() == null) { "nothing may linger on the thread" }
         }
@@ -741,7 +745,7 @@ internal class ProcessingHandlerTest {
 
         @Test
         fun `Preserves a write failure an enclosing action left recorded`() {
-            val enclosing = RuntimeException("nested logregel not stored")
+            val enclosing = SanitizedWriteFailure.of(RuntimeException("nested logregel not stored"))
             LogboekWriteFailureRecorder.record(enclosing)
 
             handler.recordFailedOutcome(Logregel(original, "aanleveren", null, null), IllegalStateException("x"))
@@ -754,7 +758,7 @@ internal class ProcessingHandlerTest {
             every {
                 mockConfig.getOptionalValue("logboekdataverwerking.log-exception-stacktrace", String::class.java)
             } returns Optional.of("ja")
-            val enclosing = RuntimeException("nested logregel not stored")
+            val enclosing = SanitizedWriteFailure.of(RuntimeException("nested logregel not stored"))
             LogboekWriteFailureRecorder.record(enclosing)
             val logregel = Logregel(original, "aanleveren", null, null)
             var lost: List<Logregel> = emptyList()
@@ -805,9 +809,14 @@ internal class ProcessingHandlerTest {
             every {
                 mockConfig.getOptionalValue("logboekdataverwerking.write-failure-policy", String::class.java)
             } returns Optional.of("fail-closed")
-            LogboekWriteFailureRecorder.record(RuntimeException("clickhouse down"))
+            val recorded = SanitizedWriteFailure.of(SQLException("connection lost", "08006"))
+            LogboekWriteFailureRecorder.record(recorded)
 
-            assertThrows<LogboekWriteException> { handler.enforceWriteAcknowledgement() }
+            val thrown = assertThrows<LogboekWriteException> { handler.enforceWriteAcknowledgement() }
+
+            assert(thrown.failure === recorded) { "the caller gets the typed failure, got ${thrown.failure}" }
+            assert(thrown.cause === recorded)
+            assert(thrown.failure?.sqlState == "08006")
         }
 
         @Test
@@ -815,7 +824,7 @@ internal class ProcessingHandlerTest {
             every {
                 mockConfig.getOptionalValue("logboekdataverwerking.write-failure-policy", String::class.java)
             } returns Optional.of("fail-open")
-            LogboekWriteFailureRecorder.record(RuntimeException("clickhouse down"))
+            LogboekWriteFailureRecorder.record(SanitizedWriteFailure.of(RuntimeException("clickhouse down")))
 
             handler.enforceWriteAcknowledgement()
         }
@@ -834,7 +843,7 @@ internal class ProcessingHandlerTest {
             every {
                 mockConfig.getOptionalValue("logboekdataverwerking.write-failure-policy", String::class.java)
             } returns Optional.of("fail-closed")
-            LogboekWriteFailureRecorder.record(RuntimeException("clickhouse down"))
+            LogboekWriteFailureRecorder.record(SanitizedWriteFailure.of(RuntimeException("clickhouse down")))
 
             handler.enforceWriteAcknowledgement(throwOnFailure = false)
 

@@ -1,6 +1,8 @@
 package nl.mijnoverheidzakelijk.ldv.repository
 
+import com.clickhouse.client.api.ClickHouseException
 import com.clickhouse.client.api.Client
+import com.clickhouse.client.api.ServerException
 import com.clickhouse.data.ClickHouseFormat
 import com.fasterxml.jackson.databind.ObjectMapper
 import io.opentelemetry.api.trace.SpanId
@@ -68,7 +70,7 @@ class ClickHouseRepository(
                 """.trimIndent()
             ).get(queryTimeoutSeconds.toLong(), TimeUnit.SECONDS)
         } catch (e: Exception) {
-            throw RuntimeException("Failed to ensure ClickHouse schema", e)
+            throw storageFailure("Failed to ensure ClickHouse schema", e)
         }
     }
 
@@ -117,11 +119,31 @@ class ClickHouseRepository(
             val data: InputStream = ByteArrayInputStream(jsonEachRowPayload.toByteArray(StandardCharsets.UTF_8))
             client.insert(table, data, ClickHouseFormat.JSONEachRow).get(queryTimeoutSeconds.toLong(), TimeUnit.SECONDS)
         } catch (e: Exception) {
-            throw RuntimeException("Failed to insert into ClickHouse", e)
+            throw storageFailure("Failed to insert into ClickHouse", e)
         }
+    }
+
+    /**
+     * Wraps a ClickHouse failure, lifting out what identifies it without quoting it:
+     * the server's error code and the query id (the full error is in
+     * `system.query_log` under that id). The server's message stays in the cause.
+     */
+    private fun storageFailure(message: String, e: Exception): SpanStorageException {
+        val chain = generateSequence<Throwable>(e) { it.cause }.take(CAUSE_SEARCH_DEPTH).toList()
+        return SpanStorageException(
+            message,
+            e,
+            vendorCode = chain.firstNotNullOfOrNull { it as? ServerException }?.code,
+            queryId = chain.firstNotNullOfOrNull { (it as? ClickHouseException)?.queryId },
+        )
     }
 
     override fun close() {
         client.close()
+    }
+
+    private companion object {
+        // How deep to look for the ClickHouse exception under e.g. an ExecutionException.
+        const val CAUSE_SEARCH_DEPTH = 10
     }
 }

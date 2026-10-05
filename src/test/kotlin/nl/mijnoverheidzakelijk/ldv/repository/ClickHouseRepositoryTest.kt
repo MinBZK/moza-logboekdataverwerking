@@ -1,6 +1,7 @@
 package nl.mijnoverheidzakelijk.ldv.repository
 
 import com.clickhouse.client.api.Client
+import com.clickhouse.client.api.ServerException
 import com.clickhouse.client.api.insert.InsertResponse
 import com.clickhouse.client.api.query.QueryResponse
 import com.clickhouse.data.ClickHouseFormat
@@ -237,6 +238,22 @@ internal class ClickHouseRepositoryTest {
                 repository.insertJsonEachRow(jsonPayload)
             }
             assert(exception.message == "Failed to insert into ClickHouse")
+        }
+
+        @Test
+        fun `Lifts the server error code and query id out of a rejected insert`() {
+            val mockFuture: CompletableFuture<InsertResponse> = CompletableFuture()
+            mockFuture.completeExceptionally(
+                ServerException(60, "Table testtable does not exist", 404, "7c1f0c1e-5d6a-4b0a-9a51-0e1f0f6f2c11"),
+            )
+            every { mockClient.insert(any<String>(), any<InputStream>(), any<ClickHouseFormat>()) } returns mockFuture
+
+            val exception = assertThrows<SpanStorageException> {
+                repository.insertJsonEachRow("""{"traceId":"123"}""")
+            }
+
+            assert(exception.vendorCode == 60) { "got ${exception.vendorCode}" }
+            assert(exception.queryId == "7c1f0c1e-5d6a-4b0a-9a51-0e1f0f6f2c11") { "got ${exception.queryId}" }
         }
 
         @Test

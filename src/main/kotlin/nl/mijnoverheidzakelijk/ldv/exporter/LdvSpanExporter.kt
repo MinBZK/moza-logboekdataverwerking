@@ -3,6 +3,7 @@ package nl.mijnoverheidzakelijk.ldv.exporter
 import io.opentelemetry.sdk.common.CompletableResultCode
 import io.opentelemetry.sdk.trace.data.SpanData
 import io.opentelemetry.sdk.trace.export.SpanExporter
+import nl.mijnoverheidzakelijk.ldv.logboekdataverwerking.SanitizedWriteFailure
 import nl.mijnoverheidzakelijk.ldv.repository.SpanRepository
 import java.util.logging.Level
 import java.util.logging.Logger
@@ -19,7 +20,9 @@ import java.util.logging.Logger
  * On construction it ensures the target schema exists. A failed export is NOT
  * retried — no OpenTelemetry span processor re-offers a failed batch — so a
  * failure logs the lost records' `traceId:spanId` to keep them traceable and
- * [export] salvages whatever of the batch it still can.
+ * [export] salvages whatever of the batch it still can. The failure that is logged
+ * and recorded is a [SanitizedWriteFailure], never the original exception: that one
+ * can echo the content of the logregel.
  */
 class LdvSpanExporter(
     private val repository: SpanRepository,
@@ -94,7 +97,8 @@ class LdvSpanExporter(
         } catch (e: Exception) {
             // The insert is all-or-nothing (no retry), so log the count and the
             // trace/span ids of the lost LDV records to keep them traceable.
-            // Sanitized: a driver echoes the rejected statement, betrokkene included.
+            // Sanitized: a driver can echo the rejected statement or row (PostgreSQL
+            // does), betrokkene included.
             val failure = SanitizedWriteFailure.of(e)
             LOGGER.log(
                 Level.SEVERE,
