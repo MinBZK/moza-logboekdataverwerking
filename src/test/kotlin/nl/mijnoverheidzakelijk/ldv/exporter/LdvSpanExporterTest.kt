@@ -12,9 +12,11 @@ import io.opentelemetry.api.trace.StatusCode
 import io.opentelemetry.sdk.common.CompletableResultCode
 import io.opentelemetry.sdk.trace.data.SpanData
 import nl.mijnoverheidzakelijk.ldv.repository.SpanRepository
+import nl.mijnoverheidzakelijk.ldv.repository.SpanStorageException
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
+import java.sql.BatchUpdateException
 import java.util.logging.Handler
 import java.util.logging.Level
 import java.util.logging.LogRecord
@@ -104,12 +106,90 @@ internal class LdvSpanExporterTest {
 
     @Test
     fun `Export records the insert failure for the fail-closed policy`() {
-        val cause = RuntimeException("Oops")
-        every { mockRepository.insert(any()) } throws cause
+        every { mockRepository.insert(any()) } throws IllegalStateException("Oops")
 
         exporter.export(mutableSetOf(mockTestSpan))
 
-        assert(LogboekWriteFailureRecorder.consume() === cause)
+        val recorded = LogboekWriteFailureRecorder.consume()
+        assert(recorded?.type == "java.lang.IllegalStateException") { "the insert failure is recorded, got $recorded" }
+    }
+
+    @Test
+    fun `Insert failure is logged without the rejected statement`() {
+        every { mockRepository.insert(any()) } throws rejectedInsert()
+
+        val records = captureExporterLogs { exporter.export(mutableSetOf(mockTestSpan)) }
+
+        val severe = records.single { it.level == Level.SEVERE }
+        val rendered = severe.message + severe.thrown.stackTraceToString()
+        assert(!rendered.contains(BSN)) { "the betrokkene must stay out of the application log: $rendered" }
+        // Still diagnosable: which kind of failure, and the database's own error class.
+        assert(rendered.contains("java.sql.BatchUpdateException")) { rendered }
+        assert(rendered.contains("23514")) { rendered }
+        assert(severe.message.contains("myTraceId:mySpanId"))
+    }
+
+    @Test
+    fun `Insert failure is relayed to the caller without the rejected statement`() {
+        every { mockRepository.insert(any()) } throws rejectedInsert()
+
+        exporter.export(mutableSetOf(mockTestSpan))
+
+        val rendered = LogboekWriteFailureRecorder.consume()!!.stackTraceToString()
+        assert(!rendered.contains(BSN)) { "the betrokkene must not travel with the exception: $rendered" }
+        assert(rendered.contains("java.sql.BatchUpdateException")) { rendered }
+    }
+
+    @Test
+    fun `Insert failure log points into the driver, not only at the wrapper`() {
+        val rejected = rejectedInsert()
+        every { mockRepository.insert(any()) } throws rejected
+
+        val records = captureExporterLogs { exporter.export(mutableSetOf(mockTestSpan)) }
+
+        val logged = records.single { it.level == Level.SEVERE }.thrown
+        assert(logged.cause!!.stackTrace.contentEquals(rejected.cause!!.stackTrace)) {
+            "the frames of the driver exception must survive"
+        }
+    }
+
+    @Test
+    fun `ClickHouse insert failure is logged with the server error code and query id`() {
+        every { mockRepository.insert(any()) } throws SpanStorageException.create(
+            "Failed to insert into ClickHouse",
+            IllegalStateException("Code: 60. Table x does not exist, while inserting $BSN"),
+            vendorCode = 60,
+            queryId = "7c1f0c1e-5d6a-4b0a-9a51-0e1f0f6f2c11",
+        )
+
+        val records = captureExporterLogs { exporter.export(mutableSetOf(mockTestSpan)) }
+
+        val severe = records.single { it.level == Level.SEVERE }
+        val rendered = severe.message + severe.thrown.stackTraceToString()
+        assert(!rendered.contains(BSN)) { rendered }
+        assert(rendered.contains("code 60")) { rendered }
+        assert(rendered.contains("queryId 7c1f0c1e-5d6a-4b0a-9a51-0e1f0f6f2c11")) { rendered }
+        assert(rendered.contains("Failed to insert into ClickHouse")) { rendered }
+    }
+
+    @Test
+    fun `Mapping failure is logged and relayed without the exception message`() {
+        mockkObject(SpanMapper)
+        try {
+            every { SpanMapper.toRow(any()) } throws IllegalArgumentException("cannot map data_subject_id $BSN")
+
+            val records = captureExporterLogs { exporter.export(mutableSetOf(mockTestSpan)) }
+
+            val severe = records.single { it.level == Level.SEVERE }
+            val logged = severe.message + severe.thrown.stackTraceToString()
+            assert(!logged.contains(BSN)) { logged }
+            assert(logged.contains("java.lang.IllegalArgumentException")) { logged }
+            val relayed = LogboekWriteFailureRecorder.consume()!!.stackTraceToString()
+            assert(!relayed.contains(BSN)) { relayed }
+            assert(relayed.contains("java.lang.IllegalArgumentException")) { relayed }
+        } finally {
+            unmockkObject(SpanMapper)
+        }
     }
 
     @Test
@@ -128,12 +208,11 @@ internal class LdvSpanExporterTest {
     fun `Export records the mapping failure for the fail-closed policy`() {
         mockkObject(SpanMapper)
         try {
-            val cause = RuntimeException("mapping bug")
-            every { SpanMapper.toRow(any()) } throws cause
+            every { SpanMapper.toRow(any()) } throws IllegalArgumentException("mapping bug")
 
             exporter.export(mutableSetOf(mockTestSpan))
 
-            assert(LogboekWriteFailureRecorder.consume() === cause)
+            assert(LogboekWriteFailureRecorder.consume()?.type == "java.lang.IllegalArgumentException")
         } finally {
             unmockkObject(SpanMapper)
         }
@@ -155,10 +234,9 @@ internal class LdvSpanExporterTest {
         val logger = Logger.getLogger(LdvSpanExporter::class.java.name)
         logger.addHandler(handler)
         try {
-            val cause = RuntimeException("mapping bug")
             val goodRow = SpanMapper.toRow(mockTestSpan)
             every { SpanMapper.toRow(mockTestSpan) } returns goodRow
-            every { SpanMapper.toRow(badSpan) } throws cause
+            every { SpanMapper.toRow(badSpan) } throws IllegalArgumentException("mapping bug")
 
             val rows = slot<List<SpanRow>>()
             every { mockRepository.insert(capture(rows)) } returns Unit
@@ -169,7 +247,7 @@ internal class LdvSpanExporterTest {
             assert(rows.captured == listOf(goodRow))
             // ...but the batch is still a failure, so fail-closed trips on the loss.
             assert(CompletableResultCode.ofFailure() == result)
-            assert(LogboekWriteFailureRecorder.consume() === cause)
+            assert(LogboekWriteFailureRecorder.consume()?.type == "java.lang.IllegalArgumentException")
             val message = records.single { it.level == Level.SEVERE }.message
             assert(message.contains("Failed to map 1 of 2"))
             assert(message.contains("badTraceId:badSpanId"))
@@ -262,6 +340,36 @@ internal class LdvSpanExporterTest {
         assert(message.contains("…")) // truncated past maxLoggedSpanIds
     }
 
+    /** The shape PostgreSQL gives a rejected batch: the message echoes the full INSERT. */
+    private fun rejectedInsert(): RuntimeException = SpanStorageException.create(
+        "Failed to insert into PostgreSQL",
+        BatchUpdateException(
+            "Batch entry 0 INSERT INTO logboek_dataverwerkingen (attributes) " +
+                "VALUES ('{\"dpl.core.data_subject_id\":\"$BSN\"}') was aborted",
+            "23514",
+            0,
+            intArrayOf(),
+            null,
+        ),
+    )
+
+    private fun captureExporterLogs(block: () -> Unit): List<LogRecord> {
+        val records = mutableListOf<LogRecord>()
+        val handler = object : Handler() {
+            override fun publish(record: LogRecord) { records.add(record) }
+            override fun flush() {}
+            override fun close() {}
+        }
+        val logger = Logger.getLogger(LdvSpanExporter::class.java.name)
+        logger.addHandler(handler)
+        try {
+            block()
+        } finally {
+            logger.removeHandler(handler)
+        }
+        return records
+    }
+
     private fun span(tid: String, sid: String): SpanData = mockk {
         every { traceId } returns tid
         every { spanId } returns sid
@@ -272,5 +380,9 @@ internal class LdvSpanExporterTest {
         every { parentSpanContext.isValid } returns false
         every { attributes.asMap().entries } returns mutableSetOf()
         every { resource.attributes.asMap().entries } returns mutableSetOf()
+    }
+
+    private companion object {
+        const val BSN = "999993653"
     }
 }
