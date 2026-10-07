@@ -234,6 +234,19 @@ Kies je tóch `batch`, doe dat dan als bewuste, gedocumenteerde afweging. De sit
 - **`fail-closed`** (standaard): bij een schrijffout gooit de interceptor een `LogboekWriteException`, zodat een verwerking niet als afgerond-en-gelogd geldt terwijl de logregel niet is opgeslagen. Dit is de strikte lezing van de acknowledgement-MUST en koppelt het slagen van een verwerking aan de beschikbaarheid van het Logboek.
 - **`fail-open`**: de schrijffout wordt gelogd (SEVERE) en de verwerking gaat door.
 
+Een schrijffout komt zonder de inhoud van de logregel in de applicatielog en bij de aanroeper. Een databasedriver kan het geweigerde statement in zijn foutmelding herhalen, inclusief de betrokkene (de PostgreSQL-driver doet dat). De wrapper logt daarom een `SanitizedWriteFailure` in plaats van de oorspronkelijke exceptie. Per exceptie uit de keten blijft over:
+
+- het exceptietype en de stackframes;
+- bij PostgreSQL de SQLState;
+- bij ClickHouse de foutcode van de server en het query-id, waarmee de volledige fout in `system.query_log` is terug te vinden;
+- de vaste foutmelding van de wrapper zelf (bijvoorbeeld `Failed to insert into PostgreSQL`) en de melding van de JVM-fouten `OutOfMemoryError`, `NoClassDefFoundError` en `UnsupportedClassVersionError`.
+
+Alle andere foutmeldingen vallen weg en zijn nergens meer beschikbaar; diagnose loopt via het bovenstaande, samen met het aantal verloren logregels en hun `trace_id:span_id` in de SEVERE-regel.
+
+De cause van een `LogboekWriteException` is dezelfde `SanitizedWriteFailure`, ook beschikbaar als `failure`. De buitenste schakel is de exceptie van de wrapper zelf: daar staan bij ClickHouse `vendorCode` en `queryId`. De SQLState van PostgreSQL zit dieper in de keten; zoek die met `failure.chain.firstNotNullOfOrNull { it.sqlState }`, bijvoorbeeld om een verbroken verbinding (SQLState-klasse `08`) anders af te handelen dan een geweigerde rij. Een controle als `cause.cause is SQLException` werkt niet meer.
+
+De wrapper heeft geen invloed op wat de databasedriver zelf logt, via de loggers `org.postgresql` en `com.clickhouse`. Ga na wat die op het ingestelde logniveau schrijven voordat je ze fijner afstelt: een driver kan dan statements, rijen of zijn eigen excepties loggen.
+
 Afdwingen van `fail-closed` werkt alleen op de synchrone `simple`-processor: daar draait de export op dezelfde thread als de request, vlak voor het einde van de verwerking. Onder `batch` gebeurt de export op een achtergrond-thread en degradeert het beleid tot log-only; de wrapper logt daarover een waarschuwing bij het opstarten. Alleen de standaardcombinatie `simple` + `fail-closed` voldoet aan de acknowledgement-MUST.
 
 `fail-closed` wordt éénmaal afgedwongen, door de **buitenste** `@Logboek`-actie. Een geneste actie gooit zelf niet: ze laat de schrijffout geregistreerd staan en rondt gewoon af, en pas nadat de buitenste actie klaar is gooit die de `LogboekWriteException`. Zo faalt de request als geheel zodra ergens in de keten een logregel niet is opgeslagen, terwijl businesscode tussen de acties de exceptie niet per ongeluk kan wegvangen (wat de garantie stilletjes zou uitschakelen) of kan aanzien voor een functionele fout van de geneste actie.
