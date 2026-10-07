@@ -204,8 +204,9 @@ class ProcessingHandler {
 
     /**
      * Always consumes the recorded write failure so none lingers on a pooled thread.
-     * When [throwOnFailure] and policy is `FAIL_CLOSED`, rethrows it so a verwerking
-     * does not count as logged when its logregel was not stored.
+     * When [throwOnFailure] and policy is `FAIL_CLOSED`, throws a
+     * [LogboekWriteException] whose cause is that recorded [SanitizedWriteFailure], so
+     * a verwerking does not count as logged when its logregel was not stored.
      *
      * Called by the outermost `@Logboek` action only: nested actions leave their
      * failure recorded, so the check runs at the request boundary where business
@@ -258,7 +259,7 @@ class ProcessingHandler {
             val stacktrace = stacktraceForExport(exception)
             for (logregel in logregels) {
                 // Per logregel, so one failure does not cost the others their outcome.
-                val failure = try {
+                val failure: Throwable? = try {
                     writeFailedOutcome(logregel, exception, stacktrace)
                 } catch (e: Throwable) {
                     e
@@ -288,7 +289,11 @@ class ProcessingHandler {
      *
      * @return the write failure when the outcome logregel was not stored, else null
      */
-    private fun writeFailedOutcome(logregel: Logregel, exception: Throwable, stacktrace: String?): Throwable? {
+    private fun writeFailedOutcome(
+        logregel: Logregel,
+        exception: Throwable,
+        stacktrace: String?,
+    ): SanitizedWriteFailure? {
         val ids = "${logregel.spanContext.traceId}:${logregel.spanContext.spanId}"
         if (!logregel.spanContext.isValid) {
             // Span.wrap of an invalid context yields no parent, so the outcome starts its own trace.
@@ -316,7 +321,9 @@ class ProcessingHandler {
         ) { "${it.spanContext.traceId}:${it.spanContext.spanId}" }
         val message = "Failed to record the outcome of ${lost.size} logregel(s); " +
             "they stay without ERROR logregel in the Logboek [$ids]"
-        if (cause == null) LOGGER.severe(message) else LOGGER.log(Level.SEVERE, message, cause)
+        // Sanitized here for a Throwable thrown directly, which can echo the content of the
+        // logregel it failed to write; a failure relayed by the exporter already is.
+        if (cause == null) LOGGER.severe(message) else LOGGER.log(Level.SEVERE, message, SanitizedWriteFailure.of(cause))
     }
 
     /**

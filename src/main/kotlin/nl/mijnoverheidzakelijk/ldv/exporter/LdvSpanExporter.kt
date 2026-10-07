@@ -3,6 +3,7 @@ package nl.mijnoverheidzakelijk.ldv.exporter
 import io.opentelemetry.sdk.common.CompletableResultCode
 import io.opentelemetry.sdk.trace.data.SpanData
 import io.opentelemetry.sdk.trace.export.SpanExporter
+import nl.mijnoverheidzakelijk.ldv.logboekdataverwerking.SanitizedWriteFailure
 import nl.mijnoverheidzakelijk.ldv.repository.SpanRepository
 import java.util.logging.Level
 import java.util.logging.Logger
@@ -19,7 +20,9 @@ import java.util.logging.Logger
  * On construction it ensures the target schema exists. A failed export is NOT
  * retried — no OpenTelemetry span processor re-offers a failed batch — so a
  * failure logs the lost records' `traceId:spanId` to keep them traceable and
- * [export] salvages whatever of the batch it still can.
+ * [export] salvages whatever of the batch it still can. The failure that is logged
+ * and recorded is a [SanitizedWriteFailure], never the original exception: that one
+ * can echo the content of the logregel.
  */
 class LdvSpanExporter(
     private val repository: SpanRepository,
@@ -65,15 +68,17 @@ class LdvSpanExporter(
         if (mappingFailure != null) {
             // A mapping failure is a code defect, not a transient DB issue, so flag
             // the cause distinctly from an insert failure and list the lost records.
+            // Sanitized: the exception message can echo the content of the logregel.
+            val failure = SanitizedWriteFailure.of(mappingFailure)
             LOGGER.log(
                 Level.SEVERE,
                 "Failed to map ${unmappableSpans.size} of ${spans.size} span(s) for export; " +
                     "lost spans: ${lostSpanIds(unmappableSpans)}",
-                mappingFailure,
+                failure,
             )
             // Relay to the request thread so a fail-closed verwerking can surface it.
             if (relayWriteFailures) {
-                LogboekWriteFailureRecorder.record(mappingFailure)
+                LogboekWriteFailureRecorder.record(failure)
             }
         }
 
@@ -92,14 +97,17 @@ class LdvSpanExporter(
         } catch (e: Exception) {
             // The insert is all-or-nothing (no retry), so log the count and the
             // trace/span ids of the lost LDV records to keep them traceable.
+            // Sanitized: a driver can echo the rejected statement or row (PostgreSQL
+            // does), betrokkene included.
+            val failure = SanitizedWriteFailure.of(e)
             LOGGER.log(
                 Level.SEVERE,
                 "Failed to export ${mappedSpans.size} span(s); lost spans: ${lostSpanIds(mappedSpans)}",
-                e,
+                failure,
             )
             // Relay to the request thread so a fail-closed verwerking can surface it.
             if (relayWriteFailures) {
-                LogboekWriteFailureRecorder.record(e)
+                LogboekWriteFailureRecorder.record(failure)
             }
             CompletableResultCode.ofFailure()
         }
@@ -131,7 +139,7 @@ class LdvSpanExporter(
         repository.close()
         CompletableResultCode.ofSuccess()
     } catch (e: Exception) {
-        LOGGER.log(Level.SEVERE, "Failed to close span repository", e)
+        LOGGER.log(Level.SEVERE, "Failed to close span repository", SanitizedWriteFailure.of(e))
         CompletableResultCode.ofFailure()
     }
 

@@ -3,6 +3,7 @@ package nl.mijnoverheidzakelijk.ldv.repository
 import com.fasterxml.jackson.databind.ObjectMapper
 import nl.mijnoverheidzakelijk.ldv.config.ConfigurationLoader
 import nl.mijnoverheidzakelijk.ldv.exporter.SpanRow
+import nl.mijnoverheidzakelijk.ldv.logboekdataverwerking.SanitizedWriteFailure
 import java.sql.Connection
 import java.sql.DriverManager
 import java.sql.SQLException
@@ -75,7 +76,7 @@ class PostgresRepository(
         }
         closeQuietly(current)
         val fresh = runCatching { connectionFactory() }
-            .getOrElse { throw RuntimeException("Failed to (re)establish PostgreSQL connection", it) }
+            .getOrElse { throw SpanStorageException.create("Failed to (re)establish PostgreSQL connection", it) }
         connection = fresh
         return fresh
     }
@@ -103,7 +104,11 @@ class PostgresRepository(
     private fun closeQuietly(conn: Connection?) {
         conn ?: return
         runCatching { conn.close() }.onFailure {
-            LOGGER.log(Level.WARNING, "Failed to close PostgreSQL connection while recycling it", it)
+            LOGGER.log(
+                Level.WARNING,
+                "Failed to close PostgreSQL connection while recycling it",
+                SanitizedWriteFailure.of(it),
+            )
         }
     }
 
@@ -136,7 +141,7 @@ class PostgresRepository(
             }
         } catch (e: SQLException) {
             invalidateConnection()
-            throw RuntimeException("Failed to ensure PostgreSQL schema", e)
+            throw SpanStorageException.create("Failed to ensure PostgreSQL schema", e)
         }
     }
 
@@ -166,7 +171,7 @@ class PostgresRepository(
                 )
             }
         } catch (e: Exception) {
-            throw RuntimeException("Failed to serialize spans for PostgreSQL", e)
+            throw SpanStorageException.create("Failed to serialize spans for PostgreSQL", e)
         }
 
         val conn = connection()
@@ -198,10 +203,14 @@ class PostgresRepository(
             conn.commit()
         } catch (e: SQLException) {
             runCatching { conn.rollback() }.onFailure {
-                LOGGER.log(Level.WARNING, "PostgreSQL rollback failed after insert error; recycling connection", it)
+                LOGGER.log(
+                    Level.WARNING,
+                    "PostgreSQL rollback failed after insert error; recycling connection",
+                    SanitizedWriteFailure.of(it),
+                )
             }
             invalidateConnection()
-            throw RuntimeException("Failed to insert into PostgreSQL", e)
+            throw SpanStorageException.create("Failed to insert into PostgreSQL", e)
         }
 
         // The batch is durably committed past this point. Restoring autoCommit is
@@ -211,7 +220,11 @@ class PostgresRepository(
         try {
             conn.autoCommit = true
         } catch (e: SQLException) {
-            LOGGER.log(Level.WARNING, "PostgreSQL commit succeeded but restoring autoCommit failed; recycling connection", e)
+            LOGGER.log(
+                Level.WARNING,
+                "PostgreSQL commit succeeded but restoring autoCommit failed; recycling connection",
+                SanitizedWriteFailure.of(e),
+            )
             invalidateConnection()
         }
     }
