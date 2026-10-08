@@ -54,21 +54,18 @@
 
     <dependencyManagement>
         <dependencies>
+            <dependency>
+                <groupId>org.junit</groupId>
+                <artifactId>junit-bom</artifactId>
+                <version>6.1.3</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
             <!-- One PostgreSQL version for the embedded-postgres binaries on every platform. -->
             <dependency>
                 <groupId>io.zonky.test.postgres</groupId>
                 <artifactId>embedded-postgres-binaries-bom</artifactId>
                 <version>18.6.0</version>
-                <type>pom</type>
-                <scope>import</scope>
-            </dependency>
-            <!-- The Quarkus version this library is tested against. It manages every
-                 dependency version it knows, so the library runs its tests on the
-                 versions a Quarkus application of this version gets. -->
-            <dependency>
-                <groupId>io.quarkus.platform</groupId>
-                <artifactId>quarkus-bom</artifactId>
-                <version>${quarkus.platform.version}</version>
                 <type>pom</type>
                 <scope>import</scope>
             </dependency>
@@ -101,14 +98,17 @@
         <dependency>
             <groupId>io.opentelemetry</groupId>
             <artifactId>opentelemetry-api</artifactId>
+            <version>1.66.0</version>
         </dependency>
         <dependency>
             <groupId>io.opentelemetry</groupId>
             <artifactId>opentelemetry-exporter-otlp</artifactId>
+            <version>1.66.0</version>
         </dependency>
         <dependency>
             <groupId>io.opentelemetry</groupId>
             <artifactId>opentelemetry-sdk</artifactId>
+            <version>1.66.0</version>
         </dependency>
         <dependency>
             <groupId>org.apache.commons</groupId>
@@ -123,6 +123,7 @@
         <dependency>
             <groupId>com.fasterxml.jackson.core</groupId>
             <artifactId>jackson-databind</artifactId>
+            <version>2.22.3</version>
         </dependency>
 
         <!-- Add SnakeYAML for YAML support -->
@@ -223,10 +224,13 @@
             <scope>test</scope>
         </dependency>
         <!-- Quarkus container for LogboekInterceptorOrderingTest: runs the interceptor next
-             to @Transactional, the way consumers run it. -->
+             to @Transactional, the way consumers run it. Versioned per artifact instead of
+             through the quarkus-bom: an imported BOM would also manage this library's own
+             runtime dependencies, so tests would run on other versions than consumers get. -->
         <dependency>
             <groupId>io.quarkus</groupId>
             <artifactId>quarkus-junit</artifactId>
+            <version>${quarkus.platform.version}</version>
             <scope>test</scope>
             <exclusions>
                 <!-- slf4j-simple is the test provider; a second one only triggers the SLF4J warning. -->
@@ -239,16 +243,19 @@
         <dependency>
             <groupId>io.quarkus</groupId>
             <artifactId>quarkus-rest</artifactId>
+            <version>${quarkus.platform.version}</version>
             <scope>test</scope>
         </dependency>
         <dependency>
             <groupId>io.quarkus</groupId>
             <artifactId>quarkus-narayana-jta</artifactId>
+            <version>${quarkus.platform.version}</version>
             <scope>test</scope>
         </dependency>
         <dependency>
             <groupId>io.rest-assured</groupId>
             <artifactId>rest-assured</artifactId>
+            <version>6.0.1</version>
             <scope>test</scope>
         </dependency>
     </dependencies>
