@@ -7,12 +7,15 @@ import io.opentelemetry.context.propagation.TextMapGetter
 import nl.mijnoverheidzakelijk.ldv.config.ConfigurationLoader
 import nl.mijnoverheidzakelijk.ldv.exporter.LogboekWriteFailureRecorder
 
+import jakarta.annotation.Priority
 import jakarta.inject.Inject
 import jakarta.interceptor.AroundInvoke
 import jakarta.interceptor.Interceptor
 import jakarta.interceptor.InvocationContext
 import jakarta.ws.rs.core.Context
 import jakarta.ws.rs.core.HttpHeaders
+import java.lang.reflect.Method
+import java.util.concurrent.ConcurrentHashMap
 import java.util.logging.Logger
 
 /**
@@ -23,8 +26,14 @@ import java.util.logging.Logger
  * It extracts an existing trace context from inbound HTTP headers
  * (if present) using the W3C Trace Context format and enriches the span with Logboek
  * attributes before ending it.
+ *
+ * Priority [Interceptor.Priority.APPLICATION] runs the interceptor inside the
+ * Quarkus `@Transactional` (`PLATFORM_BEFORE + 200`), security (`+ 150`) and
+ * cache (`+ 2`) interceptors, so a fail-closed write failure throws before the
+ * commit. Consequences and limits: README, "Interceptorvolgorde en transacties".
  */
 @Logboek
+@Priority(Interceptor.Priority.APPLICATION)
 @Interceptor
 class LogboekInterceptor {
 
@@ -38,6 +47,12 @@ class LogboekInterceptor {
          * because the write-failure recorder is thread-bound.
          */
         private val LDV_ACTION: ContextKey<Long> = ContextKey.named("ldv-action")
+
+        /** Matched by name: quarkus-cache is not a dependency of this library. */
+        private const val CACHE_RESULT_ANNOTATION = "io.quarkus.cache.CacheResult"
+
+        /** Methods already warned about, so the warning is logged once per method. */
+        private val cacheResultWarned: MutableSet<Method> = ConcurrentHashMap.newKeySet()
     }
 
     @Inject
@@ -114,6 +129,7 @@ class LogboekInterceptor {
             context.method.name
         }
         val processingActivityId = annotation.processingActivityId
+        warnOnCacheResult(context.method)
 
         // The outermost action on this thread owns the recorder: it drops any failure
         // left on this (pooled) thread by an earlier request, so the fail-closed check
@@ -184,6 +200,22 @@ class LogboekInterceptor {
                     throw writeFailure
                 }
             }
+        }
+    }
+
+    /**
+     * Warns once per method when `@Logboek` is combined with `@CacheResult`: the cache
+     * interceptor runs outside this one, so a cache hit serves data without a logregel
+     * (README, "Interceptorvolgorde en transacties"). This runs on a cache miss only,
+     * which the first call always is.
+     */
+    private fun warnOnCacheResult(method: Method) {
+        if (method.annotations.none { it.annotationClass.java.name == CACHE_RESULT_ANNOTATION }) return
+        if (cacheResultWarned.add(method)) {
+            LOGGER.warning(
+                "@Logboek on ${method.declaringClass.name}.${method.name} is combined with @CacheResult: " +
+                    "a cache hit serves data without a logregel. Move one of the two to another method.",
+            )
         }
     }
 

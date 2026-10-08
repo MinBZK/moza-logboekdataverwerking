@@ -6,7 +6,7 @@
 
     <groupId>nl.mijnoverheidzakelijk.ldv</groupId>
     <artifactId>logboekdataverwerking-wrapper</artifactId>
-    <version>2.0.0</version>
+    <version>2.1.0</version>
 
     <name>Logboek Dataverwerkingen Clickhouse</name>
     <description>JVM utilities to integrate the Logboek Dataverwerkingen (LDV) standard using a Clickhouse DB by Logius.</description>
@@ -42,6 +42,7 @@
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <!-- 2.3.20, not 2.4.x: CodeQL doesn't support Kotlin 2.4 yet (github/codeql#21938) -->
         <kotlin.version>2.3.21</kotlin.version>
+        <quarkus.platform.version>3.38.2</quarkus.platform.version>
     </properties>
 
     <pluginRepositories>
@@ -222,6 +223,41 @@
             <artifactId>embedded-postgres-binaries-linux-arm64v8</artifactId>
             <scope>test</scope>
         </dependency>
+        <!-- Quarkus container for LogboekInterceptorOrderingTest: runs the interceptor next
+             to @Transactional, the way consumers run it. Versioned per artifact instead of
+             through the quarkus-bom: an imported BOM would also manage this library's own
+             runtime dependencies, so tests would run on other versions than consumers get. -->
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-junit</artifactId>
+            <version>${quarkus.platform.version}</version>
+            <scope>test</scope>
+            <exclusions>
+                <!-- slf4j-simple is the test provider; a second one only triggers the SLF4J warning. -->
+                <exclusion>
+                    <groupId>org.jboss.slf4j</groupId>
+                    <artifactId>slf4j-jboss-logmanager</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-rest</artifactId>
+            <version>${quarkus.platform.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-narayana-jta</artifactId>
+            <version>${quarkus.platform.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.rest-assured</groupId>
+            <artifactId>rest-assured</artifactId>
+            <version>6.0.1</version>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 
     <build>
@@ -238,13 +274,20 @@
                  Build and test on JDK 21 (the project target). On a JDK newer than ByteBuddy's
                  supported max, inline mocking of java.base final classes silently fails and the mock
                  falls through to the REAL method (e.g. CompletableFuture.get() blocks forever and
-                 hangs the suite); use a JDK 21 toolchain rather than -Dnet.bytebuddy.experimental. -->
+                 hangs the suite); use a JDK 21 toolchain rather than -Dnet.bytebuddy.experimental.
+                 The add-opens is for @QuarkusTest, which adjusts the Java module configuration
+                 through jdk.internal.module and warns without it. java.util.logging.manager routes
+                 JUL through jboss-logmanager, which @QuarkusTest requires; the unit tests that
+                 capture JUL records keep working on it. -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-surefire-plugin</artifactId>
                 <version>3.6.0</version>
                 <configuration>
-                    <argLine>-XX:+EnableDynamicAgentLoading -Xshare:off</argLine>
+                    <argLine>-XX:+EnableDynamicAgentLoading -Xshare:off --add-opens=java.base/java.lang.invoke=ALL-UNNAMED</argLine>
+                    <systemPropertyVariables>
+                        <java.util.logging.manager>org.jboss.logmanager.LogManager</java.util.logging.manager>
+                    </systemPropertyVariables>
                 </configuration>
             </plugin>
             <!-- Attach sources and Javadocs as required by Maven Central -->
