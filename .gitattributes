@@ -2,6 +2,8 @@
 # Overrides any local core.autocrlf so line endings stay LF.
 * text=auto eol=lf
 
-# Windows batch wrappers conventionally keep CRLF.
-*.bat text eol=crlf
-*.cmd text eol=crlf
+# Windows batch wrappers are stored and checked out with CRLF, byte for byte.
+# Without conversion, a wrapper update from Dependabot (which writes CRLF)
+# does not flip the stored line endings.
+*.bat -text
+*.cmd -text
