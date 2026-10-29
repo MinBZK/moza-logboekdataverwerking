@@ -227,7 +227,7 @@ class LogboekInterceptor {
          * @param httpHeaders the httpHeaders object
          * @return iterable of header names
          */
-        // Deprecated since OTel 1.67, still abstract in the versions consumers run (quarkus-bom: 1.62).
+        // Deprecated override kept for now: removing it would break consumers on an older OpenTelemetry.
         @Suppress("OVERRIDE_DEPRECATION")
         override fun keys(httpHeaders: HttpHeaders): Iterable<String> {
             return httpHeaders.requestHeaders.keys
