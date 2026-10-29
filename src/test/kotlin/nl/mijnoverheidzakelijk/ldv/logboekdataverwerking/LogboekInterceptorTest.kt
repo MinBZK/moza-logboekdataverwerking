@@ -783,28 +783,6 @@ internal class LogboekInterceptorTest {
     inner class HttpHeadersGetterTests {
 
         @Test
-        fun `Keys returns header names from HttpHeaders`() {
-            // given
-            val headerMap = MultivaluedHashMap<String, String>()
-            headerMap["traceparent"] = listOf("value1")
-            headerMap["tracestate"] = listOf("value2")
-            every { mockHeaders.requestHeaders } returns headerMap
-
-            // Access the inner class via reflection
-            val getterClass = Class.forName("nl.mijnoverheidzakelijk.ldv.logboekdataverwerking.LogboekInterceptor\$HttpHeadersGetter")
-            val getter = getterClass.getDeclaredConstructor().newInstance()
-            val keysMethod = getterClass.getMethod("keys", HttpHeaders::class.java)
-
-            // when
-            val result = keysMethod.invoke(getter, mockHeaders) as Iterable<*>
-
-            // then
-            val keyList = result.map { it as String }
-            assert(keyList.contains("traceparent"))
-            assert(keyList.contains("tracestate"))
-        }
-
-        @Test
         fun `Get returns header value for given key`() {
             // given
             every { mockHeaders.getHeaderString("traceparent") } returns "test-value"

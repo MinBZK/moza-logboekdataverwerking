@@ -43,6 +43,8 @@
         <!-- 2.3.20, not 2.4.x: CodeQL doesn't support Kotlin 2.4 yet (github/codeql#21938) -->
         <kotlin.version>2.3.21</kotlin.version>
         <quarkus.platform.version>3.38.2</quarkus.platform.version>
+        <!-- api and sdk must move together: mixed versions fail at runtime. -->
+        <opentelemetry.version>1.67.0</opentelemetry.version>
     </properties>
 
     <pluginRepositories>
@@ -98,12 +100,12 @@
         <dependency>
             <groupId>io.opentelemetry</groupId>
             <artifactId>opentelemetry-api</artifactId>
-            <version>1.66.0</version>
+            <version>${opentelemetry.version}</version>
         </dependency>
         <dependency>
             <groupId>io.opentelemetry</groupId>
             <artifactId>opentelemetry-sdk</artifactId>
-            <version>1.66.0</version>
+            <version>${opentelemetry.version}</version>
         </dependency>
         <dependency>
             <groupId>org.apache.commons</groupId>
