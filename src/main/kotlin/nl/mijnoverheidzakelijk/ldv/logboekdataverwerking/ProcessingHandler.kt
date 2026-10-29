@@ -410,9 +410,9 @@ class ProcessingHandler {
          */
         internal fun buildLdvSpanProcessor(): SpanProcessor {
             if (!ConfigurationLoader.enabled) {
-                // Disabled: discard every span. A provider without any processor hands
-                // out no-op tracers since OTel 1.67, which would bypass alwaysOn and
-                // leave spans without a valid context.
+                // Disabled: discard every span, but always give the provider a real
+                // processor. Without one the SDK may hand out no-op tracers, which
+                // bypass alwaysOn and leave spans without a valid context.
                 return SimpleSpanProcessor.create(DummySpanExporter())
             }
 

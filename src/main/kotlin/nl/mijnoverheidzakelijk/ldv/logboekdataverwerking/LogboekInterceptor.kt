@@ -225,6 +225,16 @@ class LogboekInterceptor {
     private class HttpHeadersGetter : TextMapGetter<HttpHeaders> {
         /**
          * @param httpHeaders the httpHeaders object
+         * @return iterable of header names
+         */
+        // Deprecated since OTel 1.67, still abstract in the versions consumers run (quarkus-bom: 1.62).
+        @Suppress("OVERRIDE_DEPRECATION")
+        override fun keys(httpHeaders: HttpHeaders): Iterable<String> {
+            return httpHeaders.requestHeaders.keys
+        }
+
+        /**
+         * @param httpHeaders the httpHeaders object
          * @param key header name
          * @return the value for the header, or null if absent
          */
