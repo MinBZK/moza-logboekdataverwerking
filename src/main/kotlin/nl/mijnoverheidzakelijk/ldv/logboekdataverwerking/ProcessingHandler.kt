@@ -19,6 +19,7 @@ import io.opentelemetry.sdk.trace.samplers.Sampler
 import jakarta.annotation.PostConstruct
 import jakarta.enterprise.context.ApplicationScoped
 import nl.mijnoverheidzakelijk.ldv.config.ConfigurationLoader
+import nl.mijnoverheidzakelijk.ldv.exporter.DummySpanExporter
 import nl.mijnoverheidzakelijk.ldv.exporter.LdvSpanExporter
 import nl.mijnoverheidzakelijk.ldv.exporter.LdvSpanFilterProcessor
 import nl.mijnoverheidzakelijk.ldv.exporter.LogboekWriteFailureRecorder
@@ -402,15 +403,17 @@ class ProcessingHandler {
          * exporter selected via `logboekdataverwerking.dbms` (ClickHouse or
          * PostgreSQL) wrapped in the configured [SpanProcessor], then wrapped in
          * [LdvSpanFilterProcessor] so only LDV spans are exported. When disabled it
-         * returns a no-op processor, so the dedicated SDK does no work.
+         * returns a processor that discards every span (no database, no worker thread).
          *
          * @throws IllegalStateException if `enabled` but the selected backend's config is incomplete
          * @throws IllegalArgumentException if `logboekdataverwerking.dbms` is set to an unsupported value
          */
         internal fun buildLdvSpanProcessor(): SpanProcessor {
             if (!ConfigurationLoader.enabled) {
-                // Disabled: contribute nothing (no exporter, no worker thread).
-                return SpanProcessor.composite(emptyList())
+                // Disabled: discard every span, but always give the provider a real
+                // processor. Without one the SDK may hand out no-op tracers, which
+                // bypass alwaysOn and leave spans without a valid context.
+                return SimpleSpanProcessor.create(DummySpanExporter())
             }
 
             // Fail-loud on startup if the selected backend is misconfigured,

@@ -14,6 +14,8 @@ import io.opentelemetry.api.trace.TraceFlags
 import io.opentelemetry.api.trace.TraceState
 import io.opentelemetry.api.trace.Tracer
 import io.opentelemetry.context.Context
+import io.opentelemetry.sdk.trace.SdkTracerProvider
+import io.opentelemetry.sdk.trace.samplers.Sampler
 import nl.mijnoverheidzakelijk.ldv.config.ConfigurationLoader
 import nl.mijnoverheidzakelijk.ldv.exporter.LdvSpanFilterProcessor
 import nl.mijnoverheidzakelijk.ldv.exporter.LogboekWriteFailureRecorder
@@ -142,11 +144,25 @@ internal class ProcessingHandlerTest {
         }
 
         @Test
-        fun `disabled returns a no-op processor without reading backend config`() {
+        fun `disabled returns a discarding processor that keeps spans valid, without reading backend config`() {
             every { cfg.getValue("logboekdataverwerking.enabled", Boolean::class.java) } returns false
 
-            // Should not throw and should not require any backend config keys.
-            ProcessingHandler.buildLdvSpanProcessor()
+            // Must not throw and must not require any backend config keys.
+            val processor = ProcessingHandler.buildLdvSpanProcessor()
+
+            // A provider without a real processor may hand out no-op tracers.
+            val provider = SdkTracerProvider.builder()
+                .setSampler(Sampler.alwaysOn())
+                .addSpanProcessor(processor)
+                .build()
+            val span = provider.get("test").spanBuilder("verwerking").startSpan()
+            try {
+                assert(span.spanContext.isValid) { "disabled LDV must still yield a valid span context" }
+                assert(span.spanContext.isSampled) { "disabled LDV must still sample always-on" }
+            } finally {
+                span.end()
+                provider.close()
+            }
         }
 
         @Test

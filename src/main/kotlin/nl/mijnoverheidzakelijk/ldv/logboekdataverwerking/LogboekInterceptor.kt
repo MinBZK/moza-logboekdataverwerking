@@ -224,9 +224,12 @@ class LogboekInterceptor {
      */
     private class HttpHeadersGetter : TextMapGetter<HttpHeaders> {
         /**
+         * Deprecated override kept for now: removing it would break consumers on an older OpenTelemetry.
+         *
          * @param httpHeaders the httpHeaders object
          * @return iterable of header names
          */
+        @Suppress("OVERRIDE_DEPRECATION")
         override fun keys(httpHeaders: HttpHeaders): Iterable<String> {
             return httpHeaders.requestHeaders.keys
         }
